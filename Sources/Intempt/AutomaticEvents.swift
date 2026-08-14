@@ -57,6 +57,11 @@ final class AutomaticEvents {
     private let namespace: String
     private let emit: (_ name: String, _ data: [String: IntemptType]?, _ userAttributes: [String: IntemptType]?) -> Void
 
+    /// Separate from `emit` because a session end carries the id of the session
+    /// that ENDED, not the current one — routing it through the normal path
+    /// would stamp it with the new session.
+    var emitSessionEnd: (_ sessionId: String, _ data: [String: IntemptType], _ userAttributes: [String: IntemptType]) -> Void = { _, _, _ in }
+
     private let lock = ReadWriteLock(label: "com.intempt.autoevents")
     private var lastSessionId: String?
 
@@ -106,6 +111,24 @@ final class AutomaticEvents {
             // Device facts land on the profile, not the event — intemptjs's
             // model. See AutomaticProperties modification 1.
             AutomaticProperties.userAttributes())
+    }
+
+    /// Emits "Session end" for a session that is over.
+    ///
+    /// The iOS source provisions a SessionEnd collection, so without this it
+    /// stays permanently empty and no session-length or events-per-session
+    /// analysis is possible — the two figures the schema asks for cannot be
+    /// reconstructed after the fact.
+    func endSession(_ ended: IdentityManager.EndedSession) {
+        guard options.sessions else { return }
+
+        var data = AutomaticProperties.sessionAttributes()
+        data[EventKeys.SessionEndData.sessionEndEventName] = EventNames.sessionEnd
+        // Schema types both as double.
+        data[EventKeys.SessionEndData.sessionDuration] = ended.duration
+        data[EventKeys.SessionEndData.sessionEventCount] = Double(ended.eventCount)
+
+        emitSessionEnd(ended.sessionId, data, AutomaticProperties.userAttributes())
     }
 
     // MARK: - Version changes

@@ -40,17 +40,37 @@ public struct AutocaptureOptions: Equatable, Sendable {
     public var taps: Bool
     /// Control value changes, as "Edit Field".
     public var controlChanges: Bool
+    /// `UIViewController` disappearances, as "Leave screen", carrying how long
+    /// the screen was visible.
+    public var screenExits: Bool
+    /// Taps that do NOT land on a UIControl, as "Touch".
+    ///
+    /// Separate from `taps` on purpose. A tap on a button already produces
+    /// "Action", so counting it as a Touch as well would double-count every
+    /// button press.
+    public var rawTouches: Bool
 
     /// All off. Autocapture is opt-in: an SDK that starts writing events the
     /// integrator never asked for surprises people with an event bill, and on
     /// iOS it also means swizzling their view controllers uninvited.
-    public init(screens: Bool = false, taps: Bool = false, controlChanges: Bool = false) {
+    public init(
+        screens: Bool = false,
+        taps: Bool = false,
+        controlChanges: Bool = false,
+        screenExits: Bool = false,
+        rawTouches: Bool = false
+    ) {
         self.screens = screens
         self.taps = taps
         self.controlChanges = controlChanges
+        self.screenExits = screenExits
+        self.rawTouches = rawTouches
     }
 
-    public static let all = AutocaptureOptions(screens: true, taps: true, controlChanges: true)
+    /// Everything the iOS source provisions a collection for.
+    public static let all = AutocaptureOptions(
+        screens: true, taps: true, controlChanges: true,
+        screenExits: true, rawTouches: true)
     public static let none = AutocaptureOptions()
 }
 
@@ -70,6 +90,10 @@ public final class Autocapture {
     private let lock = ReadWriteLock(label: "com.intempt.autocapture")
     private var tokens: [MethodSwizzler.Token] = []
     private var running = false
+    /// When each screen appeared, so "Leave screen" can report `timeOnScreen`.
+    /// Keyed by reported name rather than by instance: holding view controllers
+    /// here, even weakly, is not worth the lifetime questions for a duration.
+    private var screenEntryTimes: [String: Date] = [:]
 
     public private(set) var options: AutocaptureOptions
 
@@ -110,9 +134,30 @@ public final class Autocapture {
                     installed.append(token)
                 }
 
-                // One hook covers both taps and value changes: every control
-                // action funnels through sendAction, so hooking UIControl's own
-                // touch handling separately would double-count.
+                if self.options.screenExits,
+                    let token = MethodSwizzler.swizzle(
+                        class: UIViewController.self,
+                        original: #selector(UIViewController.viewDidDisappear(_:)),
+                        replacement: #selector(UIViewController.intempt_viewDidDisappear(_:)))
+                {
+                    installed.append(token)
+                }
+
+                // Raw taps come from UIWindow.sendEvent, which sees the touch
+                // before any control does. Hooking it is the only way to notice
+                // a tap on a plain view.
+                if self.options.rawTouches,
+                    let token = MethodSwizzler.swizzle(
+                        class: UIWindow.self,
+                        original: #selector(UIWindow.sendEvent(_:)),
+                        replacement: #selector(UIWindow.intempt_sendEvent(_:)))
+                {
+                    installed.append(token)
+                }
+
+                // One hook covers both control actions and value changes: every
+                // control action funnels through sendAction, so hooking
+                // UIControl's own touch handling separately would double-count.
                 if self.options.taps || self.options.controlChanges,
                     let token = MethodSwizzler.swizzle(
                         class: UIApplication.self,
@@ -147,9 +192,14 @@ public final class Autocapture {
             onMain {
                 for token in toRemove {
                     let replacement: Selector
-                    if token.selector == #selector(UIViewController.viewDidAppear(_:)) {
+                    switch token.selector {
+                    case #selector(UIViewController.viewDidAppear(_:)):
                         replacement = #selector(UIViewController.intempt_viewDidAppear(_:))
-                    } else {
+                    case #selector(UIViewController.viewDidDisappear(_:)):
+                        replacement = #selector(UIViewController.intempt_viewDidDisappear(_:))
+                    case #selector(UIWindow.sendEvent(_:)):
+                        replacement = #selector(UIWindow.intempt_sendEvent(_:))
+                    default:
                         replacement = #selector(UIApplication.intempt_sendAction(_:to:from:for:))
                     }
                     MethodSwizzler.remove(token, replacement: replacement)
@@ -181,7 +231,32 @@ public final class Autocapture {
 
     fileprivate func screenAppeared(name: String) {
         guard lock.read({ running && options.screens }) else { return }
+        lock.write { screenEntryTimes[name] = Date() }
         emit(EventNames.viewScreen, [EventKeys.viewController: name])
+    }
+
+    fileprivate func screenDisappeared(name: String) {
+        guard lock.read({ running && options.screenExits }) else { return }
+
+        // Only reported when we saw the matching appearance, so a screen that
+        // was already on-screen when capture started does not produce a
+        // fabricated duration.
+        let entered: Date? = lock.write {
+            let value = screenEntryTimes[name]
+            screenEntryTimes[name] = nil
+            return value
+        }
+
+        var properties: [String: IntemptType] = [EventKeys.viewController: name]
+        if let entered {
+            properties[EventKeys.timeOnScreen] = Date().timeIntervalSince(entered)
+        }
+        emit(EventNames.leaveScreen, properties)
+    }
+
+    fileprivate func rawTouch(properties: [String: IntemptType]) {
+        guard lock.read({ running && options.rawTouches }) else { return }
+        emit(EventNames.touch, properties)
     }
 
     fileprivate func interaction(name: String, properties: [String: IntemptType]) {
@@ -203,6 +278,37 @@ public final class Autocapture {
             guard !Autocapture.isIgnored(self.view) else { return }
 
             capture.screenAppeared(name: Autocapture.screenName(for: self))
+        }
+    }
+
+    extension UIViewController {
+        @objc dynamic func intempt_viewDidDisappear(_ animated: Bool) {
+            intempt_viewDidDisappear(animated)
+
+            guard let capture = Autocapture.current() else { return }
+            guard !Autocapture.isIgnored(self.view) else { return }
+
+            capture.screenDisappeared(name: Autocapture.screenName(for: self))
+        }
+    }
+
+    extension UIWindow {
+        @objc dynamic func intempt_sendEvent(_ event: UIEvent) {
+            // Original first, always: swallowing an event here would freeze the
+            // host app's entire touch handling.
+            intempt_sendEvent(event)
+
+            guard let capture = Autocapture.current(),
+                let touch = event.allTouches?.first,
+                touch.phase == .ended,
+                let hit = touch.view
+            else { return }
+
+            // A UIControl already reports through sendAction as "Action", so
+            // counting it here too would double-count every button press.
+            guard !(hit is UIControl), !Autocapture.isIgnored(hit) else { return }
+
+            capture.rawTouch(properties: Autocapture.properties(for: hit))
         }
     }
 
@@ -229,7 +335,7 @@ public final class Autocapture {
             else { return handled }
 
             capture.interaction(
-                name: isValueChange ? EventNames.editField : EventNames.touch,
+                name: isValueChange ? EventNames.editField : EventNames.action,
                 properties: Autocapture.properties(for: control))
             return handled
         }
@@ -303,6 +409,27 @@ extension Autocapture {
                 node = current.superview
             }
             return false
+        }
+
+        /// Structural facts for any view, used by raw touch capture.
+        ///
+        /// A plain view has no action and no title, so this is the subset of the
+        /// control version that applies to everything.
+        static func properties(for view: UIView) -> [String: IntemptType] {
+            var properties: [String: IntemptType] = [
+                EventKeys.targetViewClass: String(describing: type(of: view))
+            ]
+            if let identifier = view.accessibilityIdentifier, !identifier.isEmpty {
+                properties[EventKeys.targetAccessibilityIdentifier] = identifier
+                properties[EventKeys.targetViewName] = identifier
+            }
+            if let label = view.accessibilityLabel, !label.isEmpty {
+                properties[EventKeys.targetAccessibilityLabel] = label
+            }
+            if let hierarchy = viewHierarchy(for: view) {
+                properties[EventKeys.hierarchy] = hierarchy
+            }
+            return properties
         }
 
         /// Structural facts only — never the user's content.

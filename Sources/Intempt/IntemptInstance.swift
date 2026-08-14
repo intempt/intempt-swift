@@ -139,11 +139,23 @@ public final class IntemptInstance {
                 sessionId: identity.sessionId)
         }
 
+        self.automatic.emitSessionEnd = { [weak self] sessionId, data, userAttributes in
+            guard let self else { return }
+            self.enqueueSessionEnd(
+                sessionId: sessionId, data: data, userAttributes: userAttributes)
+        }
+
         self.lifecycle = AppLifecycle { [weak self] transition in
             guard let self else { return }
             self.automatic.note(transition)
             switch transition {
             case .background, .terminate:
+                // Close the session deliberately rather than waiting for the
+                // 30-minute idle rollover: leaving the app IS the end of the
+                // session, and a duration that keeps counting while the app is
+                // closed is not a session length.
+                self.automatic.endSession(self.identity.closeCurrentSession())
+
                 // Hold a background assertion so a flush that starts as the app
                 // suspends is not frozen mid-request.
                 BackgroundTask.perform { done in
@@ -450,7 +462,14 @@ public final class IntemptInstance {
         // event of every session. `IdentityManager` has its own lock, so
         // ordering these before the barrier is safe.
         identity.recordActivity()
+
+        // A session that rolled on idle has to have its "Session end" emitted
+        // BEFORE the new session's start, or the two arrive out of order.
+        if let ended = identity.takeEndedSession() {
+            automatic.endSession(ended)
+        }
         automatic.noteActivity(sessionId: identity.sessionId)
+        identity.countEvent()
 
         return stateQueue.sync {
             guard !optedOut else { return false }
@@ -588,6 +607,30 @@ public final class IntemptInstance {
     @discardableResult
     public func trackPushReceived(_ userInfo: [AnyHashable: Any]) -> Bool {
         track(eventTitle: EventNames.pushReceived, data: Push.attribution(from: userInfo))
+    }
+
+    /// Enqueues a "Session end" for a session that has already finished.
+    ///
+    /// Takes the ended session's id explicitly: by the time this runs the
+    /// current session is a different one, and stamping the event with that
+    /// would attribute the duration to the wrong session.
+    private func enqueueSessionEnd(
+        sessionId: String,
+        data: [String: IntemptType],
+        userAttributes: [String: IntemptType]
+    ) {
+        stateQueue.sync {
+            guard !optedOut else { return }
+            let model = SessionEndModel(
+                sessionId: sessionId,
+                profileId: identity.profileId,
+                name: EventNames.sessionEnd,
+                data: data,
+                userAttributes: userAttributes)
+            guard let encoded = JSONHandler.encodeAPIData(model.toEnvelopeEntry()) else { return }
+            db.insert(.events, data: encoded)
+            db.trim(.events, to: QueueConstants.maxQueueSize)
+        }
     }
 
     // MARK: - Autocapture configuration

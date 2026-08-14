@@ -159,6 +159,18 @@ enum EventKeys {
         static let platform = "platform"
     }
 
+    /// SessionEnd.data. Note the schema puts these under `data`, NOT under
+    /// `sessionAttributes` the way SessionStart does — the two events are shaped
+    /// differently and matching each one exactly is the only option.
+    enum SessionEndData {
+        static let sessionEndEventName = "sessionEndEventName"
+        static let sessionDuration = "sessionDuration"
+        static let sessionEventCount = "sessionEventCount"
+    }
+
+    /// LeaveScreen.data adds this to the ViewScreen field set.
+    static let timeOnScreen = "timeOnScreen"
+
     /// SessionStart.sessionAttributes.
     enum SessionAttributes {
         static let source = "source"

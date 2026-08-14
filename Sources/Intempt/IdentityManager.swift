@@ -61,10 +61,30 @@ final class IdentityManager {
         self._sessionId = "se_" + UUID().uuidString
         self._pageId = "pg_" + UUID().uuidString
         self._lastActivity = clock()
+        self._sessionStartedAt = clock()
     }
 
     private let profileIdKey: String
     private var _profileId: String
+
+    /// When the current session began, and how many events it has carried.
+    ///
+    /// `SessionEnd.json` requires `sessionDuration` and `sessionEventCount`, so
+    /// they have to be tracked as the session runs — they cannot be recovered
+    /// once the session id has rolled.
+    private var _sessionStartedAt: Date
+    private var _sessionEventCount: Int = 0
+
+    /// A session that rolled while nobody was looking, so the caller can emit
+    /// its "Session end" before starting the new one.
+    private var _endedSession: EndedSession?
+
+    /// Everything "Session end" needs about a session that is over.
+    struct EndedSession: Equatable {
+        let sessionId: String
+        let duration: TimeInterval
+        let eventCount: Int
+    }
 
     // MARK: - Accessors
 
@@ -94,11 +114,64 @@ final class IdentityManager {
 
     private func rollIfIdleLocked() {
         if clock().timeIntervalSince(_lastActivity) >= Self.sessionTimeout {
+            // Capture the outgoing session BEFORE overwriting it. Its duration
+            // and event count are unrecoverable once the id is replaced, and
+            // "Session end" needs both.
+            _endedSession = EndedSession(
+                sessionId: _sessionId,
+                duration: _lastActivity.timeIntervalSince(_sessionStartedAt),
+                eventCount: _sessionEventCount)
+
             _sessionId = "se_" + UUID().uuidString
             _pageId = "pg_" + UUID().uuidString
+            _sessionStartedAt = clock()
+            _sessionEventCount = 0
         }
         _lastActivity = clock()
     }
+
+    /// Counts one event against the current session.
+    func countEvent() {
+        lock.write { _sessionEventCount += 1 }
+    }
+
+    /// Hands over a rolled-out session exactly once, so its "Session end" is
+    /// emitted a single time.
+    func takeEndedSession() -> EndedSession? {
+        lock.write {
+            let ended = _endedSession
+            _endedSession = nil
+            return ended
+        }
+    }
+
+    /// Closes the current session deliberately, for app background or
+    /// termination rather than idle timeout.
+    func closeCurrentSession() -> EndedSession {
+        lock.write {
+            let ended = EndedSession(
+                sessionId: _sessionId,
+                duration: clock().timeIntervalSince(_sessionStartedAt),
+                eventCount: _sessionEventCount)
+            _sessionId = "se_" + UUID().uuidString
+            _pageId = "pg_" + UUID().uuidString
+            _sessionStartedAt = clock()
+            _sessionEventCount = 0
+            _endedSession = nil
+            return ended
+        }
+    }
+
+    /// Test seam: forces an idle rollover without waiting 30 minutes.
+    func forceRollForTesting() {
+        lock.write {
+            _lastActivity = _lastActivity.addingTimeInterval(-(Self.sessionTimeout + 1))
+        }
+    }
+
+    /// Test seams.
+    var sessionEventCount: Int { lock.read { _sessionEventCount } }
+    var sessionStartedAt: Date { lock.read { _sessionStartedAt } }
 
     /// New screen — a fresh pageId, same session.
     func newPage() {
@@ -120,6 +193,9 @@ final class IdentityManager {
             _sessionId = "se_" + UUID().uuidString
             _pageId = "pg_" + UUID().uuidString
             _lastActivity = clock()
+            _sessionStartedAt = clock()
+            _sessionEventCount = 0
+            _endedSession = nil
         }
     }
 

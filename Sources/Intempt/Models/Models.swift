@@ -192,6 +192,35 @@ struct SessionModel: IntemptModel {
     }
 }
 
+/// Session end.
+///
+/// Deliberately NOT a reuse of `SessionModel`. `SessionEnd.json` puts its
+/// session facts under `data` while `SessionStart.json` puts them under
+/// `sessionAttributes`, and it adds `sessionDuration` and `sessionEventCount`.
+/// Sharing one model would send half the fields to a column that does not
+/// exist for one of the two events.
+struct SessionEndModel: IntemptModel {
+    let sessionId: String
+    let profileId: String
+    let name: String
+    let data: [String: IntemptType]?
+    let userAttributes: [String: IntemptType]?
+
+    /// Typeless, like SessionModel — see the note there.
+    var type: String { "" }
+
+    func toPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "eventId": sessionId,
+            "sessionId": sessionId,
+            "profileId": profileId,
+        ]
+        if let data { payload["data"] = data }
+        if let userAttributes { payload["userAttributes"] = userAttributes }
+        return payload
+    }
+}
+
 // MARK: - Consent
 
 /// Binary accept/reject, at parity with intemptjs's `ConsentAction`
