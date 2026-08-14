@@ -22,12 +22,24 @@ Analytics, personalization and consent for iOS, tvOS, macOS and watchOS.
 
 ## Install
 
-Swift Package Manager:
+This repository is **private** while the SDK is in preview, and no version tag
+has been cut yet. Swift Package Manager cannot resolve it anonymously — your
+git credentials need read access to `intempt/intempt-swift` first. Ask your
+Intempt contact for access.
+
+Pin the branch until there is a tag to pin instead:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/intempt/intempt-swift.git", from: "1.0.0")
+    .package(url: "https://github.com/intempt/intempt-swift.git", branch: "main")
 ]
+```
+
+In CI, where there is no keychain to authenticate from, rewrite the URL with a
+token that can read the repository:
+
+```bash
+git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
 ```
 
 ## Quick start
@@ -35,7 +47,7 @@ dependencies: [
 ```swift
 import Intempt
 
-let intempt = try Intempt.initialize(
+let intempt = try IntemptInstance.initialize(
     apiKey: "yourPrefix.yourSecret",
     orgId: "your-org",
     projectId: "your-project",
@@ -52,6 +64,12 @@ intempt.identify(userId: "user@example.com", userAttributes: [
     "signup_date": Date(),
 ])
 ```
+
+`initialize` is declared on `IntemptInstance`. The `Intempt` enum is a namespace
+for constants (`sdkVersion`, `defaultFeedFields`), not an entry point.
+
+Later, reach the same instance from anywhere with `IntemptInstance.mainInstance()`,
+which returns an optional rather than trapping if you call it before `initialize`.
 
 `initialize` throws rather than logging and continuing. A blank `orgId` is a
 build-time integration error, and silently posting to `.../(null)/projects/...`
@@ -83,14 +101,29 @@ intempt.productOrdered(products: [(productId: String, quantity: Int)])
 ### Personalization
 
 ```swift
-intempt.experiments(names: [String]) { result in
-    // [String: ExperimentVariant]
+intempt.experiments(names: ["checkout-button"]) { result in
+    // Result<[ExperimentChoice], IntemptError>
+    // ExperimentChoice: .experience, .variant, .target
+    if case .success(let choices) = result {
+        for choice in choices where choice.experience == "checkout-button" {
+            apply(choice.variant)
+        }
+    }
 }
 
-intempt.products(feedId: String, count: Int) { result in
-    // [ProductRecommendation]
+intempt.products(feedId: "feed-id", count: 10) { result in
+    // Result<[ProductRecommendation], IntemptError>
 }
 ```
+
+`experiments` also takes `groups:`, `optimizationType:` (`.experiment` or
+`.personalization`) and `productId:`. All are optional; omitting every filter
+asks for everything that matches.
+
+`products` defaults `fields:` to `Intempt.defaultFeedFields` deliberately. An
+unfielded request returns every catalog column including raw ML embedding
+vectors — measured at **443x** the payload. Widen it on purpose, never by
+omission.
 
 ### Consent
 
@@ -122,24 +155,45 @@ intempt.flush { sent in ... }      // completion carries the count
 intempt.flushInterval = 30         // seconds; 0 disables the timer
 ```
 
-### Autocapture (iOS)
+### Autocapture (iOS, tvOS)
 
 ```swift
-intempt.autocapture.screens = true    // UIViewController appearances
-intempt.autocapture.touches = true    // taps, with view identity
-intempt.autocapture.controls = true   // UIControl value changes
-intempt.autocapture.lifecycle = true  // launch, foreground, background, update
+intempt.autocapture.configure(.all)
 intempt.autocapture.start()
 ```
 
-Off by default. Nothing is swizzled until `start()` is called.
+Or pick the families you want:
+
+```swift
+intempt.autocapture.configure(AutocaptureOptions(
+    screens: true,        // UIViewController appeared      -> "View screen"
+    taps: true,           // UIControl action, e.g. a button -> "Action"
+    controlChanges: true, // UIControl value changed         -> "Edit Field"
+    screenExits: true,    // disappeared, carries dwell time -> "Leave screen"
+    rawTouches: true      // taps NOT on a UIControl         -> "Touch"
+))
+```
+
+`taps` and `rawTouches` are separate on purpose: a button press already emits
+*Action*, so counting it as a *Touch* too would double-count every press.
+`rawTouches` covers what the first one misses — taps that land on plain views.
+
+Off by default, and **nothing is swizzled until `start()`**. `.all` turns on all
+five; `.none` is the other preset.
 
 ### Push (APNs)
 
 ```swift
-intempt.setPushToken(deviceToken)                  // from didRegisterForRemoteNotifications
-intempt.trackPushOpen(userInfo)                    // from didReceiveRemoteNotification
+intempt.setPushToken(deviceToken)   // didRegisterForRemoteNotificationsWithDeviceToken
+intempt.trackPushOpen(userInfo)     // userNotificationCenter(_:didReceive:)
+intempt.trackPushReceived(userInfo) // didReceiveRemoteNotification, incl. silent
 ```
+
+Pass the **raw `Data`**. Do not stringify it first: the widespread
+`token.description` idiom has produced the literal `"32 bytes"` since iOS 13,
+and `setPushToken` returns `false` rather than registering that. The token is
+sent as `apns_token_<sourceId>` on an *App Install/Upgrade* event, which is how
+the destinations job finds the device.
 
 APNs only. There is no Firebase or FCM dependency at any layer.
 

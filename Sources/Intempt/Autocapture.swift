@@ -36,9 +36,11 @@ import Foundation
 public struct AutocaptureOptions: Equatable, Sendable {
     /// `UIViewController` appearances, as "View screen".
     public var screens: Bool
-    /// Control taps, as "Touch".
+    /// `UIControl` actions that are not value changes — a button press — as
+    /// "Action".
     public var taps: Bool
-    /// Control value changes, as "Edit Field".
+    /// `UIControl` value changes — a switch, slider or text field — as
+    /// "Edit Field".
     public var controlChanges: Bool
     /// `UIViewController` disappearances, as "Leave screen", carrying how long
     /// the screen was visible.
