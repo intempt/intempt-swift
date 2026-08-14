@@ -34,6 +34,16 @@ public struct ExperimentChoice: Equatable, Sendable {
     public let variant: String
     /// Server-side target the experience was configured against.
     public let target: String?
+    /// The experiment or experience NAME, when the server returns one.
+    ///
+    /// Present when the request asked for specific `names`. A `choose-web`
+    /// response carries no name — only ids — so this is nil there. The
+    /// deprecated Objective-C SDK's consumers matched on this field, so it is
+    /// surfaced rather than discarded.
+    public let name: String?
+    /// Variant payload the server attached, when present. Untyped for the same
+    /// reason as `changes`: the shape is authored server-side.
+    public let body: JSONValue?
     /// Change descriptors. Native has no DOM to mutate, so these are passed
     /// through rather than applied — a caller reads them to drive its own UI.
     ///
@@ -99,6 +109,9 @@ final class Personalization {
     func experiments(
         profileId: String,
         sessionId: String,
+        names: [String]? = nil,
+        groups: [String]? = nil,
+        optimizationType: OptimizationType? = nil,
         productId: String? = nil,
         completion: @escaping (Result<[ExperimentChoice], IntemptError>) -> Void
     ) {
@@ -111,6 +124,14 @@ final class Personalization {
             "device": Self.deviceClass,
         ]
         if let productId { body["productId"] = productId }
+        // Verified accepted by production (200). intemptjs does not send these —
+        // it asks for everything matching the current URL — but the deprecated
+        // Objective-C SDK did, via chooseExperimentsByNames /
+        // choosePersonalizationsByNames, and apps built on it select by name.
+        // Omitted entirely when nil so the intemptjs behaviour stays the default.
+        if let names, !names.isEmpty { body["names"] = names }
+        if let groups, !groups.isEmpty { body["groups"] = groups }
+        if let optimizationType { body["optimizationType"] = optimizationType.rawValue }
 
         send(endpoint: .chooseApi(org: orgId, project: projectId), body: body) { result in
             completion(result.map(Self.parseChoices))
@@ -129,6 +150,8 @@ final class Personalization {
                 experience: experience,
                 variant: variant,
                 target: Self.string(item["target"]),
+                name: Self.string(item["name"]),
+                body: item["body"].map(JSONValue.from),
                 changes: (item["changes"] as? [Any])?.map(JSONValue.from) ?? [],
                 updatedAt: (item["updatedAt"] as? NSNumber).map {
                     // Server sends epoch milliseconds.

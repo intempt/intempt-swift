@@ -428,3 +428,89 @@ final class PersonalizationTests: IntemptTestCase {
         XCTAssertEqual(Personalization.plain(NSNumber(value: -3.0)), "-3")
     }
 }
+
+// MARK: - Named experiments (Objective-C SDK parity)
+
+/// The deprecated Objective-C SDK selected experiments by name
+/// (`chooseExperimentsByNames`, `choosePersonalizationsByNames`), and apps built
+/// on it match results on a `name` field. intemptjs does neither — it asks for
+/// everything matching the current URL — so an earlier version of this SDK
+/// dropped both, which would have made those apps unmigratable.
+///
+/// Verified against production that the endpoint accepts `names`, `groups` and
+/// `optimizationType` (200 for each).
+extension PersonalizationTests {
+
+    func testNamesAreSentWhenGiven() {
+        let client = makeClient()
+        let done = expectation(description: "experiments")
+        client.experiments(
+            profileId: "pr_1", sessionId: "se_1",
+            names: ["advertisement", "trial_offer_v2"],
+            optimizationType: .experiment
+        ) { _ in done.fulfill() }
+        wait(for: [done], timeout: 2)
+
+        let body = session.bodies[0]
+        XCTAssertEqual(body["names"] as? [String], ["advertisement", "trial_offer_v2"])
+        XCTAssertEqual(body["optimizationType"] as? String, "experiment")
+    }
+
+    /// Omitted entirely when absent, so the intemptjs behaviour stays default.
+    func testNamesAreOmittedWhenNotGiven() {
+        let client = makeClient()
+        let done = expectation(description: "experiments")
+        client.experiments(profileId: "pr_1", sessionId: "se_1") { _ in done.fulfill() }
+        wait(for: [done], timeout: 2)
+
+        XCTAssertNil(session.bodies[0]["names"], "absent, not an empty array")
+        XCTAssertNil(session.bodies[0]["groups"])
+        XCTAssertNil(session.bodies[0]["optimizationType"])
+    }
+
+    /// An empty array would read as "match nothing" rather than "match all".
+    func testEmptyNamesIsTreatedAsAbsent() {
+        let client = makeClient()
+        let done = expectation(description: "experiments")
+        client.experiments(profileId: "pr_1", sessionId: "se_1", names: []) { _ in done.fulfill() }
+        wait(for: [done], timeout: 2)
+        XCTAssertNil(session.bodies[0]["names"])
+    }
+
+    func testGroupsVariant() {
+        let client = makeClient()
+        let done = expectation(description: "experiments")
+        client.experiments(
+            profileId: "pr_1", sessionId: "se_1", groups: ["default"],
+            optimizationType: .personalization
+        ) { _ in done.fulfill() }
+        wait(for: [done], timeout: 2)
+
+        XCTAssertEqual(session.bodies[0]["groups"] as? [String], ["default"])
+        XCTAssertEqual(session.bodies[0]["optimizationType"] as? String, "personalization")
+    }
+
+    /// A named response carries `name` and `body`; the old SDK's consumers read
+    /// both. Dropping them left those apps nothing to match on.
+    func testNameAndBodyAreParsedWhenPresent() {
+        let response = """
+            {"choices":[{"variant":"1","experience":"2","name":"advertisement",
+              "body":{"headline":"Go premium","showAd":true,"weight":0.4}}]}
+            """
+        let json = JSONHandler.deserializeData(Data(response.utf8)) as! [String: Any]
+        let choice = Personalization.parseChoices(json)[0]
+
+        XCTAssertEqual(choice.name, "advertisement")
+        XCTAssertEqual(choice.body?["headline"]?.stringValue, "Go premium")
+        XCTAssertEqual(choice.body?["showAd"], .bool(true))
+        XCTAssertEqual(choice.body?["weight"]?.doubleValue, 0.4)
+    }
+
+    /// choose-web returns ids only, so both must be nil rather than fabricated.
+    func testNameAndBodyAreNilWhenAbsent() {
+        let json = JSONHandler.deserializeData(Data(Self.liveChoices.utf8)) as! [String: Any]
+        let choice = Personalization.parseChoices(json)[0]
+        XCTAssertNil(choice.name)
+        XCTAssertNil(choice.body)
+    }
+}

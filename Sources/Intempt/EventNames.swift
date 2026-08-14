@@ -207,3 +207,14 @@ public struct AutomaticEventOptions: Equatable, Sendable {
         self.appStateChanges = appStateChanges
     }
 }
+
+/// Which kind of optimization `experiments(...)` is asking for.
+///
+/// The deprecated Objective-C SDK split this across two calls —
+/// `chooseExperimentsByNames` and `choosePersonalizationsByNames`. Both hit the
+/// same endpoint; this is the discriminator that separated them. Verified
+/// accepted by production; omit it to let the server decide.
+public enum OptimizationType: String, CaseIterable, Sendable {
+    case experiment
+    case personalization
+}
