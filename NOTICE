@@ -1,0 +1,109 @@
+Intempt Swift SDK
+Copyright 2026 Intempt Technologies, Inc.
+
+This product includes software developed at Mixpanel, Inc.
+(https://github.com/mixpanel/mixpanel-swift), licensed under the Apache
+License, Version 2.0. Original copyright notices span 2016-2025 Mixpanel,
+Inc. and are retained in the individual file headers. The full Apache
+License 2.0 text is in the LICENSE file.
+
+--------------------------------------------------------------------------
+Files inherited or adapted from mixpanel-swift
+--------------------------------------------------------------------------
+
+  Sources/Intempt/ReadWriteLock.swift
+      from Sources/ReadWriteLock.swift (2017)
+
+  Sources/Intempt/IntemptType.swift
+      from Sources/MixpanelType.swift (2016)
+
+  Sources/Intempt/JSONHandler.swift
+      from Sources/JSONHandler.swift (2016)
+
+  Sources/Intempt/IntemptLogger.swift
+      from Sources/MixpanelLogger.swift, PrintLogging.swift (2016)
+
+  Sources/Intempt/IntemptError.swift
+      from Sources/Error.swift (2016)
+
+  Sources/Intempt/Constants.swift
+      from Sources/Constants.swift (2016)
+
+  Sources/Intempt/IntemptDB.swift
+      from Sources/MPDB.swift (2021)
+
+  Sources/Intempt/Network.swift
+      from Sources/Network.swift (2016)
+
+  Sources/Intempt/RetryPolicy.swift
+      from Sources/FlushRequest.swift (2016)
+
+  Sources/Intempt/Flush.swift
+      from Sources/Flush.swift (2016)
+
+  Sources/Intempt/AutomaticProperties.swift
+      from Sources/AutomaticProperties.swift (2016)
+
+  Sources/Intempt/Data+Compression.swift
+      from Sources/Data+Compression.swift (2024)
+
+  Sources/Intempt/IntemptInstance.swift
+      structure from Sources/MixpanelInstance.swift and Sources/Mixpanel.swift
+      (2016-2025)
+
+--------------------------------------------------------------------------
+Modifications by Intempt Technologies, Inc. (Apache License 2.0, section 4b)
+--------------------------------------------------------------------------
+
+  - Renamed types, files and the public API to the Intempt namespace.
+
+  - Replaced Mixpanel's event, credential and persistence schema with
+    Intempt's REST contract: a batched {"track":[...]} envelope,
+    prefix.secret HTTP Basic authentication, and org/project/source-scoped
+    endpoints.
+
+  - Renamed the "people" concept to "user" and "group" to "account", and
+    replaced operator-based profile payloads ($set / $set_once / $union)
+    with Intempt's flat attribute dictionaries.
+
+  - Removed Mixpanel product features Intempt does not offer: feature
+    flags, super properties, in-app purchase tracking, group analytics in
+    Mixpanel's shape, and backup-host failover.
+
+  - Corrected defects found while adapting: an empty delete-id list no
+    longer produces malformed SQL that destroys the local store; sqlite
+    failures are classified so that transient contention does not delete
+    the database; property validation recurses to arbitrary depth;
+    non-finite numbers serialise to null rather than the string "nan";
+    logging sinks are invoked outside the lock that guards them.
+
+  - Added subsystems with no upstream equivalent: experiments, product
+    recommendation feeds, consent transmission and enforcement, APNs push,
+    and UIKit screen/touch/control autocapture.
+
+--------------------------------------------------------------------------
+Third-party code inherited transitively
+--------------------------------------------------------------------------
+
+Sources/Intempt/Data+Compression.swift derives from GzipSwift
+(https://github.com/1024jp/GzipSwift), Copyright (c) 2014-2024 1024jp,
+licensed under the MIT License:
+
+  Permission is hereby granted, free of charge, to any person obtaining a
+  copy of this software and associated documentation files (the
+  "Software"), to deal in the Software without restriction, including
+  without limitation the rights to use, copy, modify, merge, publish,
+  distribute, sublicense, and/or sell copies of the Software, and to
+  permit persons to whom the Software is furnished to do so, subject to
+  the following conditions:
+
+  The above copyright notice and this permission notice shall be included
+  in all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+  CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+  TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+  SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

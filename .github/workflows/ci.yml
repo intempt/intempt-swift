@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: swift test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app
+      - name: Build
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --parallel
+
+  compile-matrix:
+    name: compile ${{ matrix.platform }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - generic/platform=iOS
+          - generic/platform=tvOS
+          - generic/platform=watchOS
+          - platform=macOS
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app
+      # Compile-only. No simulator boot: the point is to prove every
+      # platform-conditional branch type-checks, which a macOS-host
+      # `swift test` cannot do — UIKit code is excluded there entirely.
+      - name: Build
+        run: |
+          xcodebuild build \
+            -scheme Intempt \
+            -destination '${{ matrix.platform }}' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify --quiet || exit ${PIPESTATUS[0]}
+
+  demo:
+    name: demo app + UI tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app
+      - name: Build and test demo
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project IntemptDemo/IntemptDemo.xcodeproj \
+            -scheme IntemptDemo \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify --quiet
+
+  lint:
+    name: format + secrets
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: swift-format
+        run: swift format lint --recursive --strict Sources Tests
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  license:
+    name: attribution present
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Apache 2.0 §4(b) requires the modification notices, and §4(d) requires
+      # NOTICE to travel with the distribution. A file that loses its
+      # attribution header in a refactor is a license violation, so it fails CI.
+      - name: LICENSE and NOTICE exist
+        run: |
+          test -s LICENSE || { echo "LICENSE missing"; exit 1; }
+          test -s NOTICE  || { echo "NOTICE missing"; exit 1; }
+          grep -q "Apache License" LICENSE
+          grep -q "Mixpanel" NOTICE
+      - name: Inherited files retain their attribution
+        run: |
+          fail=0
+          for f in $(grep -rl "mixpanel-swift" Sources --include='*.swift'); do
+            grep -q "Apache License, Version 2.0" "$f" || { echo "no license line: $f"; fail=1; }
+            grep -q "Copyright © .*Mixpanel"       "$f" || { echo "no copyright: $f";   fail=1; }
+            grep -q "NOTICE"                        NOTICE
+            grep -q "$(basename "$f")" NOTICE || { echo "not in NOTICE: $f"; fail=1; }
+          done
+          exit $fail
+
+  all-green:
+    name: all-green
+    runs-on: ubuntu-latest
+    needs: [test, compile-matrix, demo, lint, license]
+    if: always()
+    steps:
+      # Branch protection points at this single job, so adding a job above
+      # cannot be silently un-gated by forgetting to add it to the ruleset.
+      - name: Verify every job succeeded
+        run: |
+          echo '${{ toJSON(needs) }}' | grep -q '"result": "failure"' && exit 1
+          echo '${{ toJSON(needs) }}' | grep -q '"result": "cancelled"' && exit 1
+          exit 0
