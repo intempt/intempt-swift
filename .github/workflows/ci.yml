@@ -101,14 +101,29 @@ jobs:
           test -s NOTICE  || { echo "NOTICE missing"; exit 1; }
           grep -q "Apache License" LICENSE
           grep -q "Mixpanel" NOTICE
-      - name: Inherited files retain their attribution
+      # A file is a DERIVED WORK if and only if it carries a Mixpanel
+      # copyright line. Several files merely mention mixpanel-swift in prose to
+      # record that no upstream equivalent exists — those are original work and
+      # need no attribution. Keying on the prose mention instead flagged six
+      # original files and would have trained everyone to ignore this job.
+      - name: Derived files retain their attribution and are listed in NOTICE
         run: |
           fail=0
-          for f in $(grep -rl "mixpanel-swift" Sources --include='*.swift'); do
+          derived=$(grep -rl "Copyright © .*Mixpanel" Sources --include='*.swift')
+          if [ -z "$derived" ]; then echo "no derived files found — check the pattern"; exit 1; fi
+          for f in $derived; do
             grep -q "Apache License, Version 2.0" "$f" || { echo "no license line: $f"; fail=1; }
-            grep -q "Copyright © .*Mixpanel"       "$f" || { echo "no copyright: $f";   fail=1; }
-            grep -q "NOTICE"                        NOTICE
-            grep -q "$(basename "$f")" NOTICE || { echo "not in NOTICE: $f"; fail=1; }
+            grep -q "$(basename "$f")" NOTICE || { echo "not listed in NOTICE: $f"; fail=1; }
+          done
+          echo "$(echo "$derived" | wc -l | tr -d ' ') derived file(s) checked"
+          exit $fail
+      # A NOTICE crediting code we do not ship is as wrong as one omitting code
+      # we do. This caught a stale GzipSwift credit after compression was cut.
+      - name: NOTICE lists no files that were removed
+        run: |
+          fail=0
+          for p in $(grep -oE 'Sources/Intempt/[A-Za-z+]+\.swift' NOTICE | sort -u); do
+            test -f "$p" || { echo "NOTICE credits a file that does not exist: $p"; fail=1; }
           done
           exit $fail
 

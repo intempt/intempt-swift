@@ -17,16 +17,29 @@ foundation is derived from mixpanel-swift (Apache 2.0) — see `NOTICE`.
   with iOS data protection set for background access after first unlock.
 - **Delivery** — timer-driven flush with exponential backoff (60s→600s,
   jittered), `Retry-After` honored as a floor, app-lifecycle triggers, and a
-  background task assertion so a flush started on suspend can finish.
+  background task assertion so a flush started on suspend can finish. A batch
+  is claimed before the POST and deleted only on acknowledgement; stale claims
+  from a crashed process are recovered at startup; undecodable rows and
+  permanently-rejected batches are dropped rather than blocking the queue,
+  while 401/403 never cost data.
 - **Personalization** — `experiments` and `products` against
   `optimization/choose-api` and `feeds/{id}/data`.
 - **Consent** — `consent(action:validUntil:)` transmitted to `consents/data`,
   with `.reject` enforcing the decision rather than merely recording it.
-- **Autocapture (iOS)** — opt-in screen, touch, control and lifecycle capture
-  via Objective-C runtime swizzling.
+- **Autocapture (iOS)** — opt-in screen, touch and control capture via
+  Objective-C runtime swizzling that is safe on inherited methods, refuses to
+  double-install, and can be fully removed. Never records text-field contents,
+  skips secure fields, and honours an `intempt-ignore` opt-out.
 - **Push** — APNs device-token registration and push-open attribution.
 - **Privacy** — `PrivacyInfo.xcprivacy` manifest declaring collected data types
-  and required-reason API usage.
+  and required-reason API usage. No IDFA, no IDFV, no carrier lookup, no IP
+  geolocation and no StoreKit observation: each was refused rather than
+  omitted, because each imposes a consent prompt or a dependency on every
+  embedding app.
+- **Verification** — 285 tests including 10 that run end-to-end against
+  production; a type-check gate across iOS, iOS Simulator, tvOS, watchOS and
+  macOS; and a demo app with 15 XCUITests, the only place the UIKit code
+  actually executes.
 
 ### Fixed relative to the deprecated Objective-C SDK
 
