@@ -113,6 +113,25 @@ final class PersonalizationTests: IntemptTestCase {
         XCTAssertEqual(year, 2026, "ms read as seconds would land in 1970")
     }
 
+    /// The editor's change descriptors survive as structured, Sendable values.
+    func testChangeDescriptorsAreDecodedNotDiscarded() {
+        let body = """
+            {"choices":[{"variant":"1","experience":"2","changes":[
+              {"selector":"#hero","action":"setText","value":"Hi","weight":0.5,"live":true,"alt":null}
+            ]}]}
+            """
+        let json = JSONHandler.deserializeData(Data(body.utf8)) as! [String: Any]
+        let change = Personalization.parseChoices(json)[0].changes[0]
+
+        XCTAssertEqual(change["selector"]?.stringValue, "#hero")
+        XCTAssertEqual(change["action"]?.stringValue, "setText")
+        XCTAssertEqual(change["weight"]?.doubleValue, 0.5)
+        // CFBoolean bridges to NSNumber; a naive cast turns true into 1.
+        XCTAssertEqual(change["live"], .bool(true))
+        XCTAssertNotEqual(change["live"], .number(1))
+        XCTAssertEqual(change["alt"], .null)
+    }
+
     func testEmptyChoicesIsNotAnError() {
         let json = JSONHandler.deserializeData(Data("{\"choices\":[]}".utf8)) as! [String: Any]
         XCTAssertEqual(Personalization.parseChoices(json).count, 0)

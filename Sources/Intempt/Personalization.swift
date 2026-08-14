@@ -34,17 +34,15 @@ public struct ExperimentChoice: Equatable, Sendable {
     public let variant: String
     /// Server-side target the experience was configured against.
     public let target: String?
-    /// Raw change descriptors. Native has no DOM to mutate, so these are
-    /// passed through rather than applied — a caller reads them to drive its
-    /// own UI. Deliberately untyped: the shape is owned by the web editor and
-    /// inventing a Swift model for it would go stale silently.
-    public let changes: [[String: Any]]
+    /// Change descriptors. Native has no DOM to mutate, so these are passed
+    /// through rather than applied — a caller reads them to drive its own UI.
+    ///
+    /// `JSONValue` rather than `[String: Any]`: the shape is owned by the web
+    /// editor and modelling it as a struct would go stale silently, but `Any`
+    /// cannot be `Sendable`, so this type could not cross a concurrency
+    /// boundary and would be a hard error under the Swift 6 language mode.
+    public let changes: [JSONValue]
     public let updatedAt: Date?
-
-    public static func == (lhs: ExperimentChoice, rhs: ExperimentChoice) -> Bool {
-        lhs.experience == rhs.experience && lhs.variant == rhs.variant
-            && lhs.target == rhs.target && lhs.updatedAt == rhs.updatedAt
-    }
 }
 
 // MARK: - Products
@@ -131,7 +129,7 @@ final class Personalization {
                 experience: experience,
                 variant: variant,
                 target: Self.string(item["target"]),
-                changes: item["changes"] as? [[String: Any]] ?? [],
+                changes: (item["changes"] as? [Any])?.map(JSONValue.from) ?? [],
                 updatedAt: (item["updatedAt"] as? NSNumber).map {
                     // Server sends epoch milliseconds.
                     Date(timeIntervalSince1970: $0.doubleValue / 1000)

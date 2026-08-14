@@ -24,31 +24,20 @@ jobs:
         run: swift test --parallel
 
   compile-matrix:
-    name: compile ${{ matrix.platform }}
+    name: compile all platforms
     runs-on: macos-15
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - generic/platform=iOS
-          - generic/platform=tvOS
-          - generic/platform=watchOS
-          - platform=macOS
     steps:
       - uses: actions/checkout@v4
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.app
-      # Compile-only. No simulator boot: the point is to prove every
-      # platform-conditional branch type-checks, which a macOS-host
-      # `swift test` cannot do — UIKit code is excluded there entirely.
-      - name: Build
-        run: |
-          xcodebuild build \
-            -scheme Intempt \
-            -destination '${{ matrix.platform }}' \
-            -skipPackagePluginValidation \
-            CODE_SIGNING_ALLOWED=NO \
-            | xcbeautify --quiet || exit ${PIPESTATUS[0]}
+      # Proves every platform-conditional branch type-checks. A macOS-host
+      # `swift test` cannot: all `#if os(iOS)` code is excluded from that build
+      # entirely, so UIKit code could be arbitrarily broken and the suite would
+      # still be green. This is the gate for audit finding BLOCK-5.
+      #
+      # `swiftc -typecheck` rather than `xcodebuild`: xcodebuild needs the full
+      # platform components (several GB each, downloaded separately), while the
+      # SDKs bundled with Xcode are enough to prove the code compiles.
+      - name: Type-check every platform
+        run: ./scripts/typecheck-platforms.sh
 
   demo:
     name: demo app + UI tests
