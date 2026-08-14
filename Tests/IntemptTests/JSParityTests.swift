@@ -25,12 +25,38 @@ final class JSParityTests: XCTestCase {
         XCTAssertEqual(EventNames.productOrdered, "Product ordered")
     }
 
-    func testInteractionEventTitlesMatchIntemptJS() {
-        XCTAssertEqual(EventNames.viewPage, "View Page")
-        XCTAssertEqual(EventNames.leavePage, "Leave Page")
-        XCTAssertEqual(EventNames.clickOn, "Click On")
-        XCTAssertEqual(EventNames.changeOn, "Change On")
-        XCTAssertEqual(EventNames.submitOn, "Submit On")
+    /// Autocapture titles come from the iOS SOURCE schema, NOT from intemptjs.
+    ///
+    /// The backend provisions a different collection set per source type
+    /// (single-metadata IosSourceInitialization.java:38-46). An iOS source gets
+    /// ViewScreen / Touch / EditField / Action / SessionEnd / LeaveScreen /
+    /// AppInstallUpgrade. Sending the web SDK's "Click On" here would match no
+    /// collection and leave the provisioned `Touch` collection permanently
+    /// empty. Cross-SDK consistency holds everywhere the two agree; where the
+    /// backend defines a platform-specific contract, the backend wins.
+    func testAutocaptureTitlesMatchTheIOSSourceSchema() {
+        XCTAssertEqual(EventNames.viewScreen, "View screen")
+        XCTAssertEqual(EventNames.leaveScreen, "Leave screen")
+        XCTAssertEqual(EventNames.touch, "Touch")
+        XCTAssertEqual(EventNames.editField, "Edit Field")
+        XCTAssertEqual(EventNames.action, "Action")
+        XCTAssertEqual(EventNames.sessionEnd, "Session end")
+        XCTAssertEqual(EventNames.appInstallUpgrade, "App Install/Upgrade")
+    }
+
+    /// Guards the divergence explicitly, so a future "let's unify the names"
+    /// change has to delete a test that says why not to.
+    func testAutocaptureTitlesAreNotTheWebOnes() {
+        XCTAssertNotEqual(EventNames.viewScreen, "View Page")
+        XCTAssertNotEqual(EventNames.touch, "Click On")
+        XCTAssertNotEqual(EventNames.editField, "Change On")
+    }
+
+    /// The iOS source provisions ONE collection covering install and upgrade,
+    /// so both must carry the same title and differ in the payload.
+    func testInstallAndUpgradeShareOneTitle() {
+        XCTAssertEqual(EventNames.appInstallUpgrade, "App Install/Upgrade")
+        XCTAssertEqual(EventKeys.installType, "installType")
     }
 
     /// intemptjs is internally inconsistent: its enum declares

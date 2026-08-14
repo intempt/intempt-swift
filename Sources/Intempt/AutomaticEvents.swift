@@ -123,15 +123,24 @@ final class AutomaticEvents {
         // a duplicate Installed on next launch is worse than a missing one.
         store.set(current, forKey: key)
 
+        // The backend provisions ONE collection, "App Install/Upgrade", for
+        // both cases — not two. The distinction lives in `installType`.
         switch previous {
         case .none:
             emit(
-                EventNames.applicationInstalled,
-                [EventKeys.currentVersion: current], nil)
+                EventNames.appInstallUpgrade,
+                [
+                    EventKeys.installType: "install",
+                    EventKeys.currentVersion: current,
+                ], nil)
         case .some(let old) where old != current:
             emit(
-                EventNames.applicationUpdated,
-                [EventKeys.previousVersion: old, EventKeys.currentVersion: current], nil)
+                EventNames.appInstallUpgrade,
+                [
+                    EventKeys.installType: "upgrade",
+                    EventKeys.previousVersion: old,
+                    EventKeys.currentVersion: current,
+                ], nil)
         default:
             break  // same version, nothing to report
         }

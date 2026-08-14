@@ -73,12 +73,15 @@ final class AutomaticEventsTests: IntemptTestCase {
 
     // MARK: - Version changes
 
-    func testFirstLaunchEmitsInstalledNotUpdated() {
+    /// The iOS source provisions ONE "App Install/Upgrade" collection covering
+    /// both cases, so the title is shared and `installType` distinguishes them.
+    func testFirstLaunchReportsAnInstall() {
         let tracker = makeTracker(options: .init(sessions: false, versionChanges: true))
         tracker.checkVersion()
 
         XCTAssertEqual(emissions.count, 1)
-        XCTAssertEqual(emissions[0].name, "Application Installed")
+        XCTAssertEqual(emissions[0].name, "App Install/Upgrade")
+        XCTAssertEqual(emissions[0].data?["installType"] as? String, "install")
         XCTAssertNil(emissions[0].data?["previousVersion"])
     }
 
@@ -91,7 +94,7 @@ final class AutomaticEventsTests: IntemptTestCase {
         XCTAssertTrue(emissions.isEmpty, "installed must not repeat on every launch")
     }
 
-    func testVersionChangeEmitsUpdatedWithBothVersions() {
+    func testVersionChangeReportsAnUpgradeWithBothVersions() {
         let key = "com.intempt.lastSeenVersion.auto"
         defaults.set("0.9.0", forKey: key)
 
@@ -99,7 +102,10 @@ final class AutomaticEventsTests: IntemptTestCase {
         tracker.checkVersion()
 
         XCTAssertEqual(emissions.count, 1)
-        XCTAssertEqual(emissions[0].name, "Application Updated")
+        XCTAssertEqual(emissions[0].name, "App Install/Upgrade")
+        XCTAssertEqual(
+            emissions[0].data?["installType"] as? String, "upgrade",
+            "same collection as an install; installType is what separates them")
         XCTAssertEqual(emissions[0].data?["previousVersion"] as? String, "0.9.0")
         XCTAssertNotNil(emissions[0].data?["currentVersion"])
     }

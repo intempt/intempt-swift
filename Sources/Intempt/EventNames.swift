@@ -35,24 +35,40 @@ enum EventNames {
     /// intemptjs `PRODUCT_ORDER`. Lowercase "ordered".
     static let productOrdered = "Product ordered"
 
-    // MARK: Interaction — intemptjs IntemptEventName
+    // MARK: Autocapture — the iOS SOURCE schema, not intemptjs
+    //
+    // These deliberately DIVERGE from the web SDK, and that is not an
+    // oversight. The backend provisions a different set of collections for an
+    // iOS source than for a web source
+    // (single-metadata IosSourceInitialization.java:38-46). An iOS source gets
+    // exactly nine: Identify, SessionStart, SessionEnd, LeaveScreen,
+    // ViewScreen, Touch, Action, EditField, AppInstallUpgrade — each with its
+    // own typed Avro schema under `com.intempt.data.source.ios.`.
+    //
+    // Sending intemptjs's "Click On" to an iOS source would match no
+    // collection, leaving the provisioned `Touch` collection permanently
+    // empty. Cross-SDK consistency is the rule everywhere the two agree; where
+    // the backend defines a platform-specific contract, the backend wins.
+    //
+    // Session start is the happy case: both agree on "Session start".
 
-    /// intemptjs `PAGE_VIEW`. A `UIViewController` appearing is the native
-    /// analogue of a page view, so screen autocapture reuses this name and a
-    /// web funnel keeps working across platforms.
-    static let viewPage = "View Page"
+    /// iOS `ViewScreen` collection. The web SDK's equivalent is "View Page".
+    static let viewScreen = "View screen"
 
-    /// intemptjs `PAGE_LEAVE`.
-    static let leavePage = "Leave Page"
+    /// iOS `LeaveScreen` collection.
+    static let leaveScreen = "Leave screen"
 
-    /// intemptjs `CLICK_ON`. Used by touch autocapture.
-    static let clickOn = "Click On"
+    /// iOS `Touch` collection. The web SDK's equivalent is "Click On".
+    static let touch = "Touch"
 
-    /// intemptjs `CHANGE_ON`. Used by control autocapture.
-    static let changeOn = "Change On"
+    /// iOS `EditField` collection. The web SDK's equivalent is "Change On".
+    static let editField = "Edit Field"
 
-    /// intemptjs `SUBMIT_ON`.
-    static let submitOn = "Submit On"
+    /// iOS `Action` collection — a control action that is not a value edit.
+    static let action = "Action"
+
+    /// iOS `SessionEnd` collection.
+    static let sessionEnd = "Session end"
 
     // MARK: Session
 
@@ -68,9 +84,13 @@ enum EventNames {
 
     // MARK: Native-only lifecycle
 
-    /// No JS counterpart — a browser has no install or update moment.
-    static let applicationInstalled = "Application Installed"
-    static let applicationUpdated = "Application Updated"
+    /// iOS `AppInstallUpgrade` collection. One title covers both, matching the
+    /// backend: the collection is "App Install/Upgrade", not two collections.
+    /// `data.installType` distinguishes them.
+    static let appInstallUpgrade = "App Install/Upgrade"
+
+    /// No collection provisioned for these; they are emitted only when the
+    /// integrator opts in to `appStateChanges`.
     static let applicationOpened = "Application Opened"
     static let applicationBackgrounded = "Application Backgrounded"
 
@@ -86,6 +106,10 @@ enum EventKeys {
     static let screenName = "screenName"
     static let previousVersion = "previousVersion"
     static let currentVersion = "currentVersion"
+    /// "install" or "upgrade" — the iOS AppInstallUpgrade collection is one
+    /// collection covering both, so the distinction lives in the payload.
+    static let installType = "installType"
+    static let pushToken = "pushToken"
     static let elementType = "elementType"
     static let elementLabel = "elementLabel"
     static let elementIdentifier = "elementIdentifier"

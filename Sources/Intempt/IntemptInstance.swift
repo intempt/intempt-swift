@@ -515,6 +515,66 @@ public final class IntemptInstance {
         }
     }
 
+    // MARK: - Autocapture
+
+    /// UIKit autocapture. Off by default; call `start()` after configuring.
+    ///
+    /// ```swift
+    /// intempt.autocapture.configure(.all)
+    /// intempt.autocapture.start()
+    /// ```
+    public private(set) lazy var autocapture: Autocapture = {
+        Autocapture { [weak self] name, properties in
+            guard let self else { return }
+            _ = self.track(eventTitle: name, data: properties)
+        }
+    }()
+
+    // MARK: - Push (APNs)
+
+    /// Registers the APNs device token from
+    /// `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
+    ///
+    /// Pass the raw `Data`. Do not stringify it first — the widespread
+    /// `token.description` idiom has produced the literal "32 bytes" since
+    /// iOS 13.
+    ///
+    /// - Note: the iOS source schema has no device-token field today (Android's
+    ///   does). The token is sent as a `pushToken` profile attribute, which is
+    ///   the only place it can currently land; making it a first-class field is
+    ///   a backend change. See `Push.swift` for the detail.
+    @discardableResult
+    public func setPushToken(_ deviceToken: Data) -> Bool {
+        guard Push.isPlausible(deviceToken) else {
+            IntemptLogger.shared.log(
+                .error,
+                "push token rejected: \(deviceToken.count) bytes is too short to be an APNs token "
+                    + "— pass the raw Data from the registration callback, not a string")
+            return false
+        }
+        let hex = Push.hexString(from: deviceToken)
+        return record(
+            eventTitle: EventNames.appInstallUpgrade,
+            userAttributes: [EventKeys.pushToken: hex])
+    }
+
+    /// Reports that a push was opened. Call from
+    /// `userNotificationCenter(_:didReceive:withCompletionHandler:)`.
+    ///
+    /// The notification body is never read — only the campaign identifier and
+    /// the developer-authored title.
+    @discardableResult
+    public func trackPushOpen(_ userInfo: [AnyHashable: Any]) -> Bool {
+        track(eventTitle: EventNames.pushOpened, data: Push.attribution(from: userInfo))
+    }
+
+    /// Reports a silent or foreground push arrival. Call from
+    /// `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`.
+    @discardableResult
+    public func trackPushReceived(_ userInfo: [AnyHashable: Any]) -> Bool {
+        track(eventTitle: EventNames.pushReceived, data: Push.attribution(from: userInfo))
+    }
+
     // MARK: - Autocapture configuration
 
     /// Which lifecycle events the SDK emits on its own.
