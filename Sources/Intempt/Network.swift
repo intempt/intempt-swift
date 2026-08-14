@@ -25,7 +25,9 @@ import Foundation
 enum HTTPOutcome: Equatable {
     case success(Data?)
     case retryable(status: Int, retryAfter: TimeInterval?)
-    case terminal(status: Int)
+    /// Carries the response body so the caller can surface the server's own
+    /// message (`{"errors":[{"message":…}]}`) instead of a bare status code.
+    case terminal(status: Int, body: Data?)
     case transport(String)
 
     var isSuccess: Bool { if case .success = self { return true } else { return false } }
@@ -110,7 +112,7 @@ final class Network {
         default:
             // 401/403 (bad credentials), 402 (analytics capped), 400/422
             // (malformed) — retrying cannot help.
-            return .terminal(status: http.statusCode)
+            return .terminal(status: http.statusCode, body: data)
         }
     }
 

@@ -126,7 +126,7 @@ final class RetryPolicyTests: XCTestCase {
     /// and must survive until the integration is fixed.
     func testTerminalKeepsTheBatchAndStops() {
         var p = policy()
-        XCTAssertEqual(p.apply(.terminal(status: 401)), .keepAndStop)
+        XCTAssertEqual(p.apply(.terminal(status: 401, body: nil)), .keepAndStop)
     }
 
     func testTransportFailureKeepsAndRetries() {

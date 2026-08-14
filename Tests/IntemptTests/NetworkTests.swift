@@ -82,7 +82,7 @@ final class NetworkTests: XCTestCase {
         for status in [400, 401, 402, 403, 404, 422] {
             XCTAssertEqual(
                 Network.classify(data: nil, response: response(status), error: nil),
-                .terminal(status: status),
+                .terminal(status: status, body: nil),
                 "\(status) must be terminal, not retried forever")
         }
     }

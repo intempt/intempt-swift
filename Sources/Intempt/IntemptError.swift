@@ -60,6 +60,28 @@ public enum IntemptError: Error, Equatable {
 
     /// The local event store could not be opened or written.
     case storageUnavailable(reason: String)
+
+    /// Server rejected the request and said why. Carries the server's own
+    /// wording so an integrator sees "Invalid feed id: nonexistent" rather
+    /// than a bare 400.
+    case server(status: Int, messages: [String])
+}
+
+extension IntemptError {
+    /// Every Intempt endpoint reports failures as
+    /// `{"errors":[{"message":"…"}]}` (verified across /track, /consents/data,
+    /// /optimization/choose-api and /feeds/{id}/data — docs/CONTRACT.md).
+    /// Returns nil when the body is not in that shape, so a caller can fall
+    /// back to the bare status rather than invent a message.
+    static func serverMessages(from data: Data?) -> [String]? {
+        guard let data,
+            let json = JSONHandler.deserializeData(data) as? [String: Any],
+            let errors = json["errors"] as? [[String: Any]]
+        else { return nil }
+
+        let messages = errors.compactMap { $0["message"] as? String }.filter { !$0.isEmpty }
+        return messages.isEmpty ? nil : messages
+    }
 }
 
 extension IntemptError: CustomStringConvertible {
@@ -84,6 +106,8 @@ extension IntemptError: CustomStringConvertible {
             return "transport failure: \(description)"
         case .storageUnavailable(let reason):
             return "local event store unavailable: \(reason)"
+        case .server(let status, let messages):
+            return "server rejected request (\(status)): \(messages.joined(separator: "; "))"
         }
     }
 }

@@ -84,6 +84,8 @@ public final class IntemptInstance {
     let identity: IdentityManager
     let db: IntemptDB
     private let network: Network
+    let flusher: Flush
+    private let personalization: Personalization
 
     /// Sole owner of mutable state. Every public method funnels through it.
     private let stateQueue: DispatchQueue
@@ -106,8 +108,15 @@ public final class IntemptInstance {
         self.instanceName = instanceName
         self.stateQueue = DispatchQueue(label: "com.intempt.instance.\(instanceName)", qos: .utility)
         self.identity = IdentityManager(namespace: instanceName, store: storeOverride)
-        self.db = IntemptDB(namespace: instanceName, directoryOverride: databaseDirectory)
+        let db = IntemptDB(namespace: instanceName, directoryOverride: databaseDirectory)
+        self.db = db
         self.network = network
+        self.flusher = Flush(
+            db: db, network: network, credentials: credentials,
+            orgId: orgId, projectId: projectId, sourceId: sourceId)
+        self.personalization = Personalization(
+            network: network, credentials: credentials,
+            orgId: orgId, projectId: projectId, sourceId: sourceId)
     }
 
     /// Test-only constructor: injects the store, database directory and network.
@@ -314,6 +323,62 @@ public final class IntemptInstance {
         #else
             return "unknown"
         #endif
+    }
+
+    // MARK: - Delivery
+
+    /// Seconds between automatic flushes. 0 disables the timer.
+    public var flushInterval: TimeInterval {
+        get { flusher.flushInterval }
+        set { flusher.flushInterval = newValue }
+    }
+
+    /// Sends everything queued now.
+    /// - Parameter completion: number of events delivered.
+    public func flush(completion: ((Int) -> Void)? = nil) {
+        flusher.flushNow(completion: completion)
+    }
+
+    // MARK: - Personalization
+
+    /// Active experiment and personalization assignments for this profile.
+    ///
+    /// Not queued and not retried: an assignment is only useful while the user
+    /// is looking at the screen, so one delivered minutes late is worse than
+    /// none. Callers get a `Result` and decide.
+    public func experiments(
+        productId: String? = nil,
+        completion: @escaping (Result<[ExperimentChoice], IntemptError>) -> Void
+    ) {
+        personalization.experiments(
+            profileId: identity.profileId,
+            sessionId: identity.sessionId,
+            productId: productId,
+            completion: completion)
+    }
+
+    /// Recommended products from a configured feed.
+    ///
+    /// - Parameter fields: catalog columns to return. Defaults to a compact
+    ///   set on purpose — an unfielded request returns every column including
+    ///   raw ML embedding vectors, measured at 443x the payload size
+    ///   (docs/CONTRACT.md). Widen it deliberately, never by omission.
+    /// - Parameter productId: required by feeds whose input is `PRODUCT`.
+    ///   Omitting it there returns an empty list, not an error.
+    public func products(
+        feedId: String,
+        count: Int = 10,
+        fields: [String] = Intempt.defaultFeedFields,
+        productId: String? = nil,
+        completion: @escaping (Result<[ProductRecommendation], IntemptError>) -> Void
+    ) {
+        personalization.products(
+            feedId: feedId,
+            profileId: identity.profileId,
+            count: count,
+            fields: fields,
+            productId: productId,
+            completion: completion)
     }
 
     // MARK: - Enqueue

@@ -22,6 +22,13 @@ final class MockSession: URLSessionProtocol {
         static func status(_ code: Int, headers: [String: String] = [:]) -> Reply {
             Reply(status: code, body: nil, headers: headers, error: nil)
         }
+        static func json(_ code: Int, _ body: String) -> Reply {
+            Reply(status: code, body: Data(body.utf8), headers: [:], error: nil)
+        }
+        /// The error envelope every Intempt endpoint uses.
+        static func serverError(_ code: Int, _ message: String) -> Reply {
+            json(code, "{\"errors\":[{\"message\":\"\(message)\"}]}")
+        }
         static func offline() -> Reply {
             Reply(
                 status: 0, body: nil, headers: [:],
