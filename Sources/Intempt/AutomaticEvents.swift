@@ -93,12 +93,12 @@ final class AutomaticEvents {
         }
         guard isNew else { return }
 
+        // SessionStart.json has no `data` field: the two groups it defines are
+        // `sessionAttributes` and `userAttributes`. The first argument here is
+        // the session block, not event data.
         emit(
             EventNames.sessionStart,
-            [
-                EventKeys.sessionStartEventName: EventNames.sessionStart,
-                EventKeys.source: AutomaticProperties.platform,
-            ],
+            AutomaticProperties.sessionAttributes(),
             // Device facts land on the profile, not the event — intemptjs's
             // model. See AutomaticProperties modification 1.
             AutomaticProperties.userAttributes())
@@ -124,22 +124,32 @@ final class AutomaticEvents {
         store.set(current, forKey: key)
 
         // The backend provisions ONE collection, "App Install/Upgrade", for
-        // both cases — not two. The distinction lives in `installType`.
+        // both cases — not two — and its schema
+        // (com.intempt.data.source.ios/AppInstallUpgrade.json) distinguishes
+        // them with a BOOLEAN `isUpgrade`, plus two DOUBLE version codes. An
+        // earlier version sent `installType: "install"` and string versions;
+        // none of those names exists in the schema, so every one of them was
+        // silently dropped after ingestion returned 201.
+        let buildType = Self.currentBuildType
+
         switch previous {
         case .none:
             emit(
                 EventNames.appInstallUpgrade,
                 [
-                    EventKeys.installType: "install",
-                    EventKeys.currentVersion: current,
+                    EventKeys.isUpgrade: false,
+                    EventKeys.currentVersionCode: Self.versionCode(current),
+                    EventKeys.currentBuildType: buildType,
                 ], nil)
         case .some(let old) where old != current:
             emit(
                 EventNames.appInstallUpgrade,
                 [
-                    EventKeys.installType: "upgrade",
-                    EventKeys.previousVersion: old,
-                    EventKeys.currentVersion: current,
+                    EventKeys.isUpgrade: true,
+                    EventKeys.previousVersionCode: Self.versionCode(old),
+                    EventKeys.currentVersionCode: Self.versionCode(current),
+                    EventKeys.previousBuildType: buildType,
+                    EventKeys.currentBuildType: buildType,
                 ], nil)
         default:
             break  // same version, nothing to report
@@ -158,6 +168,29 @@ final class AutomaticEvents {
         case .terminate:
             break  // no event: the process is going away and it would not flush
         }
+    }
+
+    /// The schema types version codes as `double`, but iOS versions are dotted
+    /// strings ("1.2.3") that no numeric parse can hold losslessly.
+    ///
+    /// Encodes major.minor as the integer and fractional part — 1.2.3 becomes
+    /// 1.2 — which is monotonic across ordinary releases and is what a
+    /// numeric comparison in a segment needs. The exact string is not
+    /// recoverable from it, and there is no schema field that could hold one.
+    static func versionCode(_ version: String) -> Double {
+        let parts = version.split(separator: ".").compactMap { Int($0) }
+        guard let major = parts.first else { return 0 }
+        let minor = parts.count > 1 ? parts[1] : 0
+        return Double(major) + Double(minor) / 100.0
+    }
+
+    /// Android's `buildType` vocabulary, which the shared schema inherited.
+    static var currentBuildType: String {
+        #if DEBUG
+            return "debug"
+        #else
+            return "release"
+        #endif
     }
 
     /// Test seam.

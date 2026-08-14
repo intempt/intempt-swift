@@ -103,41 +103,40 @@ enum AutomaticProperties {
         }
     }
 
+    /// SessionStart.userAttributes accepts exactly `deviceType` and `platform`
+    /// (plus geo, which the server derives from the request IP). Anything else
+    /// sent here has no column and is silently dropped after a 201.
     private static func build() -> [String: IntemptType] {
-        var p: [String: IntemptType] = [
-            // intemptjs vocabulary — same keys the web SDK writes.
-            "platform": platform,
+        [
             "deviceType": deviceType,
+            "platform": platform,
+        ]
+    }
 
-            // Native-only. The web SDK has no counterpart for these, so the
-            // names are ours; the camelCase style is intemptjs's.
-            "sdkName": "intempt-swift",
-            "sdkVersion": Intempt.sdkVersion,
-            "osName": osName,
-            "osVersion": osVersion,
-            "deviceModel": deviceModel,
-            "manufacturer": "Apple",
-            "locale": Locale.current.identifier,
-            "timezone": TimeZone.current.identifier,
+    /// SessionStart.sessionAttributes — the schema's fixed set.
+    ///
+    /// `iosVendorId` and `iosAdvertiserId` have columns here and are
+    /// deliberately left empty. IDFA needs an AppTrackingTransparency prompt
+    /// the SDK must not trigger on the host app's behalf, and IDFV is a device
+    /// identifier the SDK has no reason to collect by default. A customer who
+    /// wants either can pass it explicitly.
+    static func sessionAttributes() -> [String: IntemptType] {
+        var p: [String: IntemptType] = [
+            "source": platform,
+            "device": deviceModel,
+            "sessionStartEventName": EventNames.sessionStart,
         ]
 
         let info = Bundle.main.infoDictionary
         if let version = info?["CFBundleShortVersionString"] as? String {
             p["appVersion"] = version
         }
-        if let build = info?["CFBundleVersion"] as? String {
-            p["appBuild"] = build
+        if let name = info?["CFBundleName"] as? String ?? info?["CFBundleDisplayName"] as? String {
+            p["appName"] = name
         }
         if let identifier = Bundle.main.bundleIdentifier {
-            p["appId"] = identifier
+            p["appIdentifier"] = identifier
         }
-
-        // Only from the main-thread resolution, or if we happen to be on it.
-        if let size = lock.read({ resolvedScreen }) ?? (Thread.isMainThread ? screenSize : nil) {
-            p["screenWidth"] = size.width
-            p["screenHeight"] = size.height
-        }
-
         return p
     }
 

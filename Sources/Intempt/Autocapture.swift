@@ -181,7 +181,7 @@ public final class Autocapture {
 
     fileprivate func screenAppeared(name: String) {
         guard lock.read({ running && options.screens }) else { return }
-        emit(EventNames.viewScreen, [EventKeys.screenName: name])
+        emit(EventNames.viewScreen, [EventKeys.viewController: name])
     }
 
     fileprivate func interaction(name: String, properties: [String: IntemptType]) {
@@ -308,11 +308,12 @@ extension Autocapture {
         /// Structural facts only — never the user's content.
         static func properties(for control: UIControl) -> [String: IntemptType] {
             var properties: [String: IntemptType] = [
-                EventKeys.elementType: String(describing: type(of: control))
+                EventKeys.targetViewClass: String(describing: type(of: control))
             ]
 
             if let identifier = control.accessibilityIdentifier, !identifier.isEmpty {
-                properties[EventKeys.elementIdentifier] = identifier
+                properties[EventKeys.targetAccessibilityIdentifier] = identifier
+                properties[EventKeys.targetViewName] = identifier
             }
 
             // A button's title is developer-authored copy ("Add to cart") and is
@@ -323,15 +324,16 @@ extension Autocapture {
                 let title = button.title(for: .normal),
                 !title.isEmpty
             {
-                properties[EventKeys.elementLabel] = title
-            } else if let label = control.accessibilityLabel, !label.isEmpty,
+                properties[EventKeys.targetText] = title
+            }
+            if let label = control.accessibilityLabel, !label.isEmpty,
                 !(control is UITextField)
             {
-                properties[EventKeys.elementLabel] = label
+                properties[EventKeys.targetAccessibilityLabel] = label
             }
 
             if let hierarchy = viewHierarchy(for: control) {
-                properties[EventKeys.viewHierarchy] = hierarchy
+                properties[EventKeys.hierarchy] = hierarchy
             }
             return properties
         }

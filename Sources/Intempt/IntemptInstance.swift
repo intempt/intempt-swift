@@ -494,7 +494,7 @@ public final class IntemptInstance {
                     sessionId: sessionId,
                     profileId: identity.profileId,
                     name: name,
-                    data: data,
+                    sessionAttributes: data,
                     userAttributes: userAttributes)
             } else if let userAttributes {
                 model = RecordModel(

@@ -171,7 +171,9 @@ struct SessionModel: IntemptModel {
     let sessionId: String
     let profileId: String
     let name: String
-    let data: [String: IntemptType]?
+    /// SessionStart.json has NO `data` field. What the JS SDK puts in event
+    /// attributes belongs in `sessionAttributes` here.
+    let sessionAttributes: [String: IntemptType]?
     let userAttributes: [String: IntemptType]?
 
     /// Empty on purpose — see the type note above. `toEnvelopeEntry()` omits
@@ -184,7 +186,7 @@ struct SessionModel: IntemptModel {
             "sessionId": sessionId,
             "profileId": profileId,
         ]
-        if let data { payload["data"] = data }
+        if let sessionAttributes { payload["sessionAttributes"] = sessionAttributes }
         if let userAttributes { payload["userAttributes"] = userAttributes }
         return payload
     }

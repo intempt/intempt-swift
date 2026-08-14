@@ -56,7 +56,42 @@ final class JSParityTests: XCTestCase {
     /// so both must carry the same title and differ in the payload.
     func testInstallAndUpgradeShareOneTitle() {
         XCTAssertEqual(EventNames.appInstallUpgrade, "App Install/Upgrade")
-        XCTAssertEqual(EventKeys.installType, "installType")
+        XCTAssertEqual(EventKeys.isUpgrade, "isUpgrade")
+    }
+
+    /// Payload field names come from the iOS Avro schemas. Ingestion returns
+    /// 201 for any shape, so a wrong name here is silent data loss: the event
+    /// stores, the property vanishes, nothing reports a problem.
+    ///
+    /// Source: single-metadata/src/main/resources/schema/
+    ///         com.intempt.data.source.ios/{ViewScreen,Touch,EditField,
+    ///         AppInstallUpgrade,SessionStart}.json
+    func testPayloadKeysMatchTheIOSAvroSchemas() {
+        XCTAssertEqual(EventKeys.viewController, "viewController")
+        XCTAssertEqual(EventKeys.targetViewClass, "targetViewClass")
+        XCTAssertEqual(EventKeys.targetText, "targetText")
+        XCTAssertEqual(EventKeys.targetAccessibilityIdentifier, "targetAccessibilityIdentifier")
+        XCTAssertEqual(EventKeys.targetAccessibilityLabel, "targetAccessibilityLabel")
+        XCTAssertEqual(EventKeys.hierarchy, "hierarchy")
+        XCTAssertEqual(EventKeys.previousVersionCode, "previousVersionCode")
+        XCTAssertEqual(EventKeys.currentVersionCode, "currentVersionCode")
+        XCTAssertEqual(EventKeys.SessionAttributes.iosVendorId, "iosVendorId")
+        XCTAssertEqual(EventKeys.SessionAttributes.appIdentifier, "appIdentifier")
+    }
+
+    /// The names an earlier version invented. None exists in any iOS schema.
+    func testInventedKeyNamesAreGone() {
+        let payload = AutomaticProperties.userAttributes()
+        for invented in ["screenName", "elementType", "elementLabel", "viewHierarchy", "sdkName"] {
+            XCTAssertNil(payload[invented], "\(invented) has no column in any iOS schema")
+        }
+    }
+
+    func testVersionCodeEncoding() {
+        XCTAssertEqual(AutomaticEvents.versionCode("1.2.3"), 1.02, accuracy: 0.0001)
+        XCTAssertEqual(AutomaticEvents.versionCode("0.9.0"), 0.09, accuracy: 0.0001)
+        XCTAssertEqual(AutomaticEvents.versionCode("2.0"), 2.0, accuracy: 0.0001)
+        XCTAssertEqual(AutomaticEvents.versionCode("nonsense"), 0, accuracy: 0.0001)
     }
 
     /// intemptjs is internally inconsistent: its enum declares
@@ -148,7 +183,7 @@ final class JSParityTests: XCTestCase {
     func testSessionEntryOmitsTheTypeField() {
         let model = SessionModel(
             sessionId: "se_1", profileId: "pr_1", name: EventNames.sessionStart,
-            data: nil, userAttributes: ["platform": "iOS 18.2"])
+            sessionAttributes: nil, userAttributes: ["platform": "iOS 18.2"])
 
         let entry = model.toEnvelopeEntry()
         XCTAssertNil(entry["type"], "SessionEventModel carries no type field")
@@ -163,7 +198,7 @@ final class JSParityTests: XCTestCase {
     func testTypeOmissionSurvivesTheExistential() {
         let model: IntemptModel = SessionModel(
             sessionId: "se_1", profileId: "pr_1", name: EventNames.sessionStart,
-            data: nil, userAttributes: nil)
+            sessionAttributes: nil, userAttributes: nil)
 
         XCTAssertNil(
             model.toEnvelopeEntry()["type"],
@@ -175,7 +210,7 @@ final class JSParityTests: XCTestCase {
     func testSessionEventIdIsTheSessionId() {
         let model = SessionModel(
             sessionId: "se_abc", profileId: "pr_1", name: EventNames.sessionStart,
-            data: nil, userAttributes: nil)
+            sessionAttributes: nil, userAttributes: nil)
 
         let payload = model.toPayload()
         XCTAssertEqual(payload["eventId"] as? String, "se_abc")

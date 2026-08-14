@@ -99,21 +99,87 @@ enum EventNames {
     static let pushOpened = "Push Opened"
 }
 
-/// Keys used by automatic events. camelCase, matching intemptjs.
+/// Payload field names, taken from the iOS source Avro schemas.
+///
+/// These are NOT free choices. `single-metadata/src/main/resources/schema/
+/// com.intempt.data.source.ios/*.json` defines the record shape for every iOS
+/// collection, and a field that is not in the schema has no column to land in.
+/// The HTTP layer accepts it — ingestion returns 201 for arbitrary payloads —
+/// so a wrong name here is SILENT data loss: the event is stored, the property
+/// is gone, and nothing anywhere reports a problem.
+///
+/// An earlier version of this file invented `screenName`, `elementType`,
+/// `elementLabel`, `elementIdentifier` and `viewHierarchy`. None of those
+/// exists in any iOS schema.
 enum EventKeys {
-    static let sessionStartEventName = "sessionStartEventName"
-    static let source = "source"
-    static let screenName = "screenName"
-    static let previousVersion = "previousVersion"
-    static let currentVersion = "currentVersion"
-    /// "install" or "upgrade" — the iOS AppInstallUpgrade collection is one
-    /// collection covering both, so the distinction lives in the payload.
-    static let installType = "installType"
+
+    // MARK: ViewScreen.json → data
+
+    /// The view controller's class name. NOT "screenName".
+    static let viewController = "viewController"
+    static let viewControllerAccessibilityIdentifier = "viewControllerAccessibilityIdentifier"
+    static let viewControllerAccessibilityLabel = "viewControllerAccessibilityLabel"
+
+    // MARK: Touch.json / EditField.json → data
+    //
+    // Both collections share one record shape.
+
+    static let actionMethod = "actionMethod"
+    /// Developer-authored control copy (a button title). Never a text field's
+    /// contents — see Autocapture.
+    static let targetText = "targetText"
+    static let targetViewClass = "targetViewClass"
+    static let targetViewName = "targetViewName"
+    static let targetAccessibilityIdentifier = "targetAccessibilityIdentifier"
+    static let targetAccessibilityLabel = "targetAccessibilityLabel"
+    /// NOT "viewHierarchy".
+    static let hierarchy = "hierarchy"
+    static let appVisibilityState = "appVisibilityState"
+
+    // MARK: AppInstallUpgrade.json → data
+    //
+    // The schema has no string "version" fields: it carries a boolean and two
+    // DOUBLES. `installType: "install"` had no column at all.
+
+    static let isUpgrade = "isUpgrade"
+    static let previousVersionCode = "previousVersionCode"
+    static let currentVersionCode = "currentVersionCode"
+    static let previousBuildType = "previousBuildType"
+    static let currentBuildType = "currentBuildType"
+
+    // MARK: SessionStart.json
+    //
+    // Session start has NO `data` field. It has `userAttributes` and
+    // `sessionAttributes`, and each accepts a fixed set of names.
+
+    /// SessionStart.userAttributes — exactly these, plus server-derived geo
+    /// (country / region / city).
+    enum SessionUserAttributes {
+        static let deviceType = "deviceType"
+        static let platform = "platform"
+    }
+
+    /// SessionStart.sessionAttributes.
+    enum SessionAttributes {
+        static let source = "source"
+        static let device = "device"
+        static let iosVendorId = "iosVendorId"
+        static let iosAdvertiserId = "iosAdvertiserId"
+        static let appName = "appName"
+        static let appIdentifier = "appIdentifier"
+        static let appVersion = "appVersion"
+        static let sessionStartEventName = "sessionStartEventName"
+    }
+
+    // MARK: Not in any iOS schema
+
+    /// Sent as a profile attribute because the iOS AppInstallUpgrade schema
+    /// has no `userAttributes` block at all, unlike Android's app_install
+    /// which carries `userAttributes.device_token`. See Push.swift.
     static let pushToken = "pushToken"
-    static let elementType = "elementType"
-    static let elementLabel = "elementLabel"
-    static let elementIdentifier = "elementIdentifier"
-    static let viewHierarchy = "viewHierarchy"
+
+    /// Push attribution. No iOS collection is provisioned for push events, so
+    /// these names are ours until one exists.
     static let campaignId = "campaignId"
     static let notificationTitle = "notificationTitle"
 }

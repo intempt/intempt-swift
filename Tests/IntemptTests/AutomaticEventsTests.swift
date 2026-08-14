@@ -58,11 +58,19 @@ final class AutomaticEventsTests: IntemptTestCase {
         XCTAssertNotNil(attributes)
         XCTAssertNotNil(attributes?["platform"])
         XCTAssertNotNil(attributes?["deviceType"])
-        XCTAssertNotNil(attributes?["deviceModel"])
-        XCTAssertEqual(attributes?["sdkName"] as? String, "intempt-swift")
+        XCTAssertNil(
+            attributes?["deviceModel"],
+            "deviceModel has no column in SessionStart.userAttributes")
 
-        XCTAssertNil(emissions[0].data?["platform"], "device facts must not be event data")
-        XCTAssertNil(emissions[0].data?["deviceModel"])
+        // SessionStart.json defines only deviceType and platform under
+        // userAttributes; everything else the SDK knows goes in
+        // sessionAttributes, which the schema types separately.
+        XCTAssertEqual(attributes?.count, 2, "userAttributes accepts exactly two names")
+
+        let session = emissions[0].data
+        XCTAssertEqual(session?["sessionStartEventName"] as? String, "Session start")
+        XCTAssertNotNil(session?["device"], "the model belongs in sessionAttributes")
+        XCTAssertNotNil(session?["source"])
     }
 
     func testSessionsCanBeDisabled() {
@@ -81,8 +89,9 @@ final class AutomaticEventsTests: IntemptTestCase {
 
         XCTAssertEqual(emissions.count, 1)
         XCTAssertEqual(emissions[0].name, "App Install/Upgrade")
-        XCTAssertEqual(emissions[0].data?["installType"] as? String, "install")
-        XCTAssertNil(emissions[0].data?["previousVersion"])
+        XCTAssertEqual(emissions[0].data?["isUpgrade"] as? Bool, false)
+        XCTAssertNotNil(emissions[0].data?["currentVersionCode"], "schema types this as a double")
+        XCTAssertNil(emissions[0].data?["previousVersionCode"])
     }
 
     func testSameVersionOnSecondLaunchEmitsNothing() {
@@ -104,10 +113,12 @@ final class AutomaticEventsTests: IntemptTestCase {
         XCTAssertEqual(emissions.count, 1)
         XCTAssertEqual(emissions[0].name, "App Install/Upgrade")
         XCTAssertEqual(
-            emissions[0].data?["installType"] as? String, "upgrade",
-            "same collection as an install; installType is what separates them")
-        XCTAssertEqual(emissions[0].data?["previousVersion"] as? String, "0.9.0")
-        XCTAssertNotNil(emissions[0].data?["currentVersion"])
+            emissions[0].data?["isUpgrade"] as? Bool, true,
+            "same collection as an install; isUpgrade is what separates them")
+        XCTAssertEqual(
+            emissions[0].data?["previousVersionCode"] as? Double, 0.09,
+            "0.9.0 encodes as major + minor/100")
+        XCTAssertNotNil(emissions[0].data?["currentVersionCode"])
     }
 
     /// Two instances in one app must not each claim to have seen the install.
