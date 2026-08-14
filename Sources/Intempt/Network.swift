@@ -31,14 +31,25 @@ enum HTTPOutcome: Equatable {
     var isSuccess: Bool { if case .success = self { return true } else { return false } }
 }
 
+/// Narrower than `dataTask(with:completionHandler:)` on purpose: returning a
+/// `URLSessionDataTask` would force every test double to subclass a Foundation
+/// class whose initialisers are unavailable. The SDK only ever creates a task
+/// and resumes it, so that is the whole contract.
 protocol URLSessionProtocol: AnyObject {
-    func dataTask(
-        with request: URLRequest,
-        completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void
-    ) -> URLSessionDataTask
+    func perform(
+        _ request: URLRequest,
+        completion: @escaping (Data?, URLResponse?, Error?) -> Void
+    )
 }
 
-extension URLSession: URLSessionProtocol {}
+extension URLSession: URLSessionProtocol {
+    func perform(
+        _ request: URLRequest,
+        completion: @escaping (Data?, URLResponse?, Error?) -> Void
+    ) {
+        dataTask(with: request, completionHandler: completion).resume()
+    }
+}
 
 final class Network {
 
@@ -76,9 +87,9 @@ final class Network {
     }
 
     func send(_ request: URLRequest, completion: @escaping (HTTPOutcome) -> Void) {
-        session.dataTask(with: request) { data, response, error in
+        session.perform(request) { data, response, error in
             completion(Self.classify(data: data, response: response, error: error))
-        }.resume()
+        }
     }
 
     /// Exhaustive classification. `error != nil` alone is not a failure test —

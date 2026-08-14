@@ -4,5 +4,15 @@
 xcuserdata/
 DerivedData/
 .swiftpm/
-*.xcodeproj
 dist/
+
+# Credentials for the live contract test. NEVER committed — this repo is public.
+.env.local
+.env.*.local
+*.pem
+*.p8
+*.p12
+
+# The demo app's project file IS tracked (CI builds it). Only user state is not.
+*.xcuserstate
+project.xcworkspace/

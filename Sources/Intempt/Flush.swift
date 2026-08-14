@@ -1,0 +1,276 @@
+//
+//  Flush.swift
+//  Intempt
+//
+//  Adapted from mixpanel-swift's Flush.swift
+//  (https://github.com/mixpanel/mixpanel-swift)
+//  Copyright © 2016 Mixpanel. All rights reserved.
+//  Licensed under the Apache License, Version 2.0.
+//
+//  Modifications by Intempt Technologies, Inc. (Apache License 2.0, §4(b)):
+//
+//    1. CLAIM / RELEASE, NOT MARK-AND-HOPE. A batch is claimed (flag=1) before
+//       the POST so a concurrent flush cannot pick up the same rows, and the
+//       claim is RELEASED on failure. Rows are deleted only after the server
+//       acknowledges them. The old Obj-C SDK marked rows sent before the POST
+//       and then blanket-deleted on any success, destroying sibling batches.
+//
+//    2. STALE CLAIMS ARE RECOVERED AT STARTUP. A crash mid-flight leaves rows
+//       flagged, and a flagged row is invisible to the reader forever. Upstream
+//       never releases them, so one crash strands those events permanently.
+//
+//    3. POISON ROWS ARE DROPPED. An undecodable blob at the head of the queue
+//       fails its batch on every attempt, blocking all delivery behind it
+//       forever. Undecodable rows are deleted and the drain continues.
+//
+//    4. ONE FAILURE ENDS THE DRAIN. Upstream keeps walking batches after a
+//       failure. Against a server that is down that is 100 pointless requests;
+//       here the first retryable failure stops the pass and the backoff window
+//       decides when to try again.
+//
+//    5. CONSENT GOES FIRST, ON ITS OWN ENDPOINT. A withdrawal reaching the
+//       server matters more than analytics throughput. A *terminal* consent
+//       failure does not block events, though — a consent-specific
+//       misconfiguration must not strand every event in the queue.
+//
+//    6. NO GZIP. Upstream compresses. Verified against production: the
+//       endpoint returns HTTP 400 for `Content-Encoding: gzip`
+//       (docs/CONTRACT.md), so porting that path would fail every request.
+//
+import Foundation
+
+/// Drives delivery: claims batches, sends them, and applies the disposition
+/// `RetryPolicy` decides.
+final class Flush {
+
+    private let db: IntemptDB
+    private let network: Network
+    private let credentials: IntemptCredentials
+    private let trackEndpoint: Endpoint
+    private let consentEndpoint: Endpoint
+
+    /// Sole owner of `policy`, `inFlight` and `waiters`. Every private method
+    /// below must be called on it, and every completion is invoked on it.
+    private let queue = DispatchQueue(label: "com.intempt.flush", qos: .utility)
+    private var policy: RetryPolicy
+    private var inFlight = false
+    private var waiters: [(Int) -> Void] = []
+
+    private var timer: Timer?
+
+    /// Seconds between automatic flushes. 0 disables the timer. Assigning while
+    /// the timer is running re-arms it rather than leaving the old interval.
+    var flushInterval: TimeInterval = APIConstants.flushInterval {
+        didSet {
+            guard timer != nil || oldValue != flushInterval else { return }
+            if timer != nil { startTimer() }
+        }
+    }
+
+    init(
+        db: IntemptDB,
+        network: Network,
+        credentials: IntemptCredentials,
+        orgId: String,
+        projectId: String,
+        sourceId: String,
+        policy: RetryPolicy = RetryPolicy()
+    ) {
+        self.db = db
+        self.network = network
+        self.credentials = credentials
+        self.trackEndpoint = .track(org: orgId, project: projectId, sourceId: sourceId)
+        self.consentEndpoint = .consents(org: orgId, project: projectId)
+        self.policy = policy
+
+        // Modification 2: recover anything a previous process left claimed.
+        db.releaseAllClaims(.events)
+        db.releaseAllClaims(.consents)
+    }
+
+    deinit { timer?.invalidate() }
+
+    // MARK: - Timer
+
+    func startTimer() {
+        stopTimer()
+        guard flushInterval > 0 else { return }
+        let interval = flushInterval
+
+        let arm = { [weak self] in
+            guard let self else { return }
+            let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+                self?.flushNow()
+            }
+            // .common, not .default: a scroll or a modal presentation puts the
+            // main run loop into tracking mode, and a .default-mode timer stops
+            // firing for as long as the user's finger is down.
+            RunLoop.main.add(t, forMode: .common)
+            self.timer = t
+        }
+        if Thread.isMainThread { arm() } else { DispatchQueue.main.async(execute: arm) }
+    }
+
+    func stopTimer() {
+        let disarm = { [weak self] in
+            self?.timer?.invalidate()
+            self?.timer = nil
+        }
+        if Thread.isMainThread { disarm() } else { DispatchQueue.main.sync(execute: disarm) }
+    }
+
+    // MARK: - Entry point
+
+    /// Sends everything queued, oldest first, stopping at the first retryable
+    /// failure or when the backoff window is closed.
+    ///
+    /// - Parameter completion: receives the number of **events** delivered.
+    ///   Overlapping calls coalesce: the second caller's completion fires with
+    ///   the first pass's result rather than starting a parallel drain.
+    func flushNow(completion: ((Int) -> Void)? = nil) {
+        queue.async {
+            if self.inFlight {
+                if let completion { self.waiters.append(completion) }
+                return
+            }
+            self.inFlight = true
+
+            self.drainConsents {
+                self.drainEvents(sent: 0) { total in
+                    self.inFlight = false
+                    let pending = self.waiters
+                    self.waiters = []
+                    completion?(total)
+                    pending.forEach { $0(total) }
+                }
+            }
+        }
+    }
+
+    // MARK: - Events
+
+    /// Recursive one-batch-at-a-time drain. Must be called on `queue`;
+    /// `done` is invoked on `queue`.
+    private func drainEvents(sent: Int, done: @escaping (Int) -> Void) {
+        guard !policy.requestNotAllowed else { return done(sent) }
+
+        let rows = db.read(.events, limit: APIConstants.maxBatchSize, flag: false)
+        guard !rows.isEmpty else { return done(sent) }
+
+        // Modification 3: separate the decodable from the poison.
+        var entries: [[String: Any]] = []
+        var goodIds: [Int32] = []
+        var poisonIds: [Int32] = []
+        for row in rows {
+            if let entry = JSONHandler.deserializeData(row.data) as? [String: Any] {
+                entries.append(entry)
+                goodIds.append(row.id)
+            } else {
+                poisonIds.append(row.id)
+            }
+        }
+        if !poisonIds.isEmpty {
+            IntemptLogger.shared.log(
+                .warning, "dropping \(poisonIds.count) undecodable event(s) from the queue")
+            db.delete(.events, ids: poisonIds)
+        }
+        guard !entries.isEmpty else {
+            // The whole batch was poison. Continue — the next read sees fresh rows.
+            return drainEvents(sent: sent, done: done)
+        }
+
+        let request: URLRequest
+        do {
+            request = try network.makeRequest(
+                endpoint: trackEndpoint,
+                credentials: credentials,
+                body: TrackEnvelope.wrap(entries))
+        } catch {
+            // Cannot be built, so it can never be sent. Dropping avoids an
+            // infinite retry on rows that will never serialise.
+            IntemptLogger.shared.log(.error, "dropping unsendable batch: \(error)")
+            db.delete(.events, ids: goodIds)
+            return drainEvents(sent: sent, done: done)
+        }
+
+        // Modification 1: claim before the POST, never mark as sent.
+        db.setFlag(.events, ids: goodIds, to: true)
+
+        network.send(request) { [weak self] outcome in
+            guard let self else { return }
+            self.queue.async {
+                switch self.policy.apply(outcome) {
+                case .deleteBatch:
+                    self.db.delete(.events, ids: goodIds)
+                    self.drainEvents(sent: sent + goodIds.count, done: done)
+
+                case .keepAndRetry, .keepAndStop:
+                    // Modifications 1 and 4: release the claim so the rows are
+                    // visible to the next pass, and stop rather than hammer.
+                    self.db.setFlag(.events, ids: goodIds, to: false)
+                    done(sent)
+                }
+            }
+        }
+    }
+
+    // MARK: - Consents
+
+    /// One request per consent record — the endpoint takes a flat body, not a
+    /// batch. Must be called on `queue`; `done` is invoked on `queue`.
+    private func drainConsents(done: @escaping () -> Void) {
+        guard !policy.requestNotAllowed else { return done() }
+
+        let rows = db.read(.consents, limit: 1, flag: false)
+        guard let row = rows.first else { return done() }
+
+        guard let body = JSONHandler.deserializeData(row.data) as? [String: Any] else {
+            IntemptLogger.shared.log(.warning, "dropping undecodable consent record")
+            db.delete(.consents, ids: [row.id])
+            return drainConsents(done: done)
+        }
+
+        let request: URLRequest
+        do {
+            request = try network.makeRequest(
+                endpoint: consentEndpoint, credentials: credentials, body: body)
+        } catch {
+            IntemptLogger.shared.log(.error, "dropping unsendable consent record: \(error)")
+            db.delete(.consents, ids: [row.id])
+            return drainConsents(done: done)
+        }
+
+        db.setFlag(.consents, ids: [row.id], to: true)
+
+        network.send(request) { [weak self] outcome in
+            guard let self else { return }
+            self.queue.async {
+                switch self.policy.apply(outcome) {
+                case .deleteBatch:
+                    self.db.delete(.consents, ids: [row.id])
+                    self.drainConsents(done: done)
+
+                case .keepAndRetry:
+                    // Server-side or transport trouble: events would fail too.
+                    self.db.setFlag(.consents, ids: [row.id], to: false)
+                    done()
+
+                case .keepAndStop:
+                    // Modification 5: a terminal consent failure is specific to
+                    // consent. Keep the record, but let events proceed rather
+                    // than stranding the entire queue behind it.
+                    self.db.setFlag(.consents, ids: [row.id], to: false)
+                    done()
+                }
+            }
+        }
+    }
+
+    // MARK: - Test seams
+
+    var consecutiveFailures: Int { queue.sync { policy.consecutiveFailures } }
+    var isTimerRunning: Bool {
+        if Thread.isMainThread { return timer != nil }
+        return DispatchQueue.main.sync { timer != nil }
+    }
+}

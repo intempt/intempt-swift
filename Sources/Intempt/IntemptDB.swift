@@ -261,6 +261,15 @@ final class IntemptDB {
         queue.sync { exec("DELETE FROM \(tableName(type));") }
     }
 
+    /// Clears every claim flag. Called once at process start: a crash or a kill
+    /// while a batch was in flight leaves those rows flagged, and a flagged row
+    /// is invisible to `read(flag: false)` forever after. Upstream never
+    /// releases them, so events stranded by one crash are never sent again.
+    @discardableResult
+    func releaseAllClaims(_ type: PersistenceType) -> Bool {
+        queue.sync { exec("UPDATE \(tableName(type)) SET flag = 0 WHERE flag = 1;") }
+    }
+
     @discardableResult
     func setFlag(_ type: PersistenceType, ids: [Int32], to newValue: Bool) -> Bool {
         guard !ids.isEmpty else { return true }
