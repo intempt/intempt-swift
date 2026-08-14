@@ -341,3 +341,143 @@ final class FlushTests: IntemptTestCase {
         flush.stopTimer()
     }
 }
+
+// MARK: - Terminal rejection policy
+
+/// A batch the server will never accept must not block the queue forever, and
+/// a batch rejected because the CREDENTIALS are wrong must never be dropped.
+///
+/// Every test here drives a controllable clock. The backoff gate opens after
+/// two consecutive failures, so with a real clock the third flush is suppressed
+/// and never reaches the server — the strike counter would never advance and
+/// these tests would pass for the wrong reason.
+extension FlushTests {
+
+    /// Runs `count` flushes, stepping past the backoff window between each.
+    private func flushRepeatedly(
+        _ flush: Flush, _ count: Int, clock: () -> Void
+    ) {
+        for _ in 0..<count {
+            _ = flushSync(flush)
+            clock()
+        }
+    }
+
+    /// Production has been observed returning a transient 400 to a payload it
+    /// accepts moments later, so one rejection must not discard anything.
+    func testASingleTerminalRejectionKeepsTheBatch() {
+        seedEvents(db, count: 3)
+        let flush = makeFlush(replies: [.serverError(400, "transient")])
+
+        XCTAssertEqual(flushSync(flush), 0)
+        XCTAssertEqual(db.count(.events), 3, "one 400 must not cost data")
+    }
+
+    func testRepeatedTerminalRejectionsEventuallyDropTheBatch() {
+        seedEvents(db, count: 3)
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let flush = makeFlush(
+            fallback: .serverError(400, "permanently malformed"), now: { now })
+        let step = { now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1) }
+
+        _ = flushSync(flush)
+        XCTAssertEqual(db.count(.events), 3, "strike 1: kept")
+        step()
+
+        _ = flushSync(flush)
+        XCTAssertEqual(db.count(.events), 3, "strike 2: kept")
+        step()
+
+        _ = flushSync(flush)
+        XCTAssertEqual(
+            db.count(.events), 0,
+            "strike 3: dropped, or it blocks every event behind it forever")
+    }
+
+    /// The exemption that matters. A 401 is a fixable integration mistake and
+    /// the events are perfectly valid — dropping them would be data loss caused
+    /// by a typo in a key.
+    func testUnauthorizedIsNeverDroppedNoMatterHowManyTimes() {
+        seedEvents(db, count: 3)
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let flush = makeFlush(fallback: .status(401), now: { now })
+
+        for attempt in 1...6 {
+            _ = flushSync(flush)
+            now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
+            XCTAssertEqual(
+                db.count(.events), 3,
+                "attempt \(attempt): a credential failure must never cost data")
+        }
+        XCTAssertGreaterThanOrEqual(
+            session.requestCount, 6, "each attempt must actually reach the server")
+    }
+
+    func testForbiddenIsAlsoNeverDropped() {
+        seedEvents(db, count: 2)
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let flush = makeFlush(fallback: .status(403), now: { now })
+
+        for _ in 1...5 {
+            _ = flushSync(flush)
+            now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
+        }
+        XCTAssertEqual(db.count(.events), 2)
+        XCTAssertGreaterThanOrEqual(session.requestCount, 5)
+    }
+
+    /// A success must clear the batch's strike entry.
+    ///
+    /// This is memory hygiene, not a behaviour change, and the test says so
+    /// rather than pretending otherwise. Row ids are AUTOINCREMENT and never
+    /// reused, so an entry left behind after its rows are deleted can never
+    /// match another batch — it simply accumulates, one entry per failed batch,
+    /// for the life of the process. An earlier version of this test used a
+    /// second `Flush` instance and therefore proved nothing: mutation testing
+    /// showed removing the clear left it green.
+    func testSuccessClearsTheStrikeEntrySoItCannotAccumulate() {
+        seedEvents(db, count: 2, prefix: "a")
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let flush = makeFlush(replies: [.serverError(400, "blip"), .ok()], now: { now })
+
+        XCTAssertEqual(flushSync(flush), 0, "strike 1")
+        XCTAssertEqual(flush.trackedStrikeCount, 1, "the failed batch is being tracked")
+
+        now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
+        XCTAssertEqual(flushSync(flush), 2, "then it succeeds")
+        XCTAssertEqual(db.count(.events), 0)
+        XCTAssertEqual(
+            flush.trackedStrikeCount, 0,
+            "the entry must be released; ids are never reused, so it could only accumulate")
+    }
+
+    /// A retryable failure is not a strike either — it clears the entry too.
+    func testRetryableFailureDoesNotAccumulateStrikes() {
+        seedEvents(db, count: 2)
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let flush = makeFlush(replies: [.serverError(400, "blip"), .status(503)], now: { now })
+
+        _ = flushSync(flush)
+        XCTAssertEqual(flush.trackedStrikeCount, 1)
+
+        now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
+        _ = flushSync(flush)
+        XCTAssertEqual(
+            flush.trackedStrikeCount, 0,
+            "a 503 is not evidence the payload is bad, so the strike is dropped")
+        XCTAssertEqual(db.count(.events), 2, "and nothing is deleted")
+    }
+
+    /// 413 means the batch is too large to ever be accepted as-is.
+    func testPayloadTooLargeIsDroppedAfterTheLimit() {
+        seedEvents(db, count: 4)
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let flush = makeFlush(fallback: .status(413), now: { now })
+
+        for _ in 1...3 {
+            _ = flushSync(flush)
+            now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
+        }
+        XCTAssertEqual(db.count(.events), 0)
+    }
+}

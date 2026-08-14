@@ -230,16 +230,74 @@ final class Flush {
                 switch self.policy.apply(outcome) {
                 case .deleteBatch:
                     self.db.delete(.events, ids: goodIds)
+                    self.strikes.removeValue(forKey: goodIds[0])
                     self.drainEvents(sent: sent + goodIds.count, done: done)
 
-                case .keepAndRetry, .keepAndStop:
+                case .keepAndRetry:
                     // Modifications 1 and 4: release the claim so the rows are
                     // visible to the next pass, and stop rather than hammer.
                     self.db.setFlag(.events, ids: goodIds, to: false)
+                    self.strikes.removeValue(forKey: goodIds[0])
+                    done(sent)
+
+                case .keepAndStop:
+                    self.db.setFlag(.events, ids: goodIds, to: false)
+                    self.recordTerminal(outcome, ids: goodIds)
                     done(sent)
                 }
             }
         }
+    }
+
+    /// Consecutive terminal rejections for the batch starting at a given row id.
+    private var strikes: [Int32: Int] = [:]
+
+    /// Statuses that mean "these bytes will never be accepted" as opposed to
+    /// "your credentials are wrong". A misconfigured key must never cost data;
+    /// a permanently malformed batch must never block the queue forever.
+    private static let payloadRejections: Set<Int> = [400, 413, 422]
+
+    /// How many terminal rejections a batch may take before it is discarded.
+    private static let maxStrikes = 3
+
+    /// Decides whether a terminally-rejected batch should be dropped.
+    ///
+    /// Without this a batch the server will never accept sits at the head of
+    /// the queue and fails every flush forever, blocking every event behind it
+    /// — the same shape as the poison-row problem, one level up. Neither
+    /// upstream nor the old Obj-C SDK has any notion of it.
+    ///
+    /// 401 and 403 are deliberately exempt: those mean the integration is
+    /// misconfigured, the data is fine, and dropping it would destroy real
+    /// events over a fixable mistake.
+    ///
+    /// Three strikes rather than one because production has been observed
+    /// returning a transient 400 to a payload it accepts on the next attempt
+    /// (docs/CONTRACT.md).
+    private func recordTerminal(_ outcome: HTTPOutcome, ids: [Int32]) {
+        guard case .terminal(let status, let body) = outcome,
+            Self.payloadRejections.contains(status),
+            let head = ids.first
+        else { return }
+
+        let count = (strikes[head] ?? 0) + 1
+        strikes[head] = count
+
+        guard count >= Self.maxStrikes else {
+            IntemptLogger.shared.log(
+                .warning,
+                "batch rejected with \(status) (attempt \(count)/\(Self.maxStrikes)); keeping")
+            return
+        }
+
+        let detail = IntemptError.serverMessages(from: body)?.joined(separator: "; ")
+            ?? "no message"
+        IntemptLogger.shared.log(
+            .error,
+            "dropping \(ids.count) event(s) after \(count) rejections with \(status): \(detail). "
+                + "These events will never be accepted; keeping them would block the queue.")
+        db.delete(.events, ids: ids)
+        strikes.removeValue(forKey: head)
     }
 
     // MARK: - Consents
@@ -297,6 +355,11 @@ final class Flush {
     // MARK: - Test seams
 
     var consecutiveFailures: Int { queue.sync { policy.consecutiveFailures } }
+    /// Test seam. Also the reason success clears its entry: ids are never
+    /// reused (the table is AUTOINCREMENT), so an entry left behind after a
+    /// batch is deleted can never match again and would accumulate for the life
+    /// of the process.
+    var trackedStrikeCount: Int { queue.sync { strikes.count } }
     /// Reads the intent flag, not the `Timer` — see `startTimer`.
     var isTimerRunning: Bool { timerLock.read { armed } }
 }

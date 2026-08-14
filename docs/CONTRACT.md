@@ -150,6 +150,42 @@ Errors across every endpoint use:
 Parsed by `IntemptError.serverMessages(from:)` so a failure surfaces the
 server's own wording rather than a bare status code.
 
+## Transient 400s
+
+Production has been observed returning **400 to a payload it accepts moments
+later**. A 55-event drain failed its first batch with a 400; the identical
+bytes then returned 201 on six consecutive retries.
+
+Consequences, both implemented:
+
+- A terminal rejection **never deletes data on the first failure**. The SDK
+  keeps the batch and retries on the next flush.
+- A batch is discarded only after **3 consecutive** 400/413/422 rejections,
+  because a batch the server will genuinely never accept would otherwise sit at
+  the head of the queue and block every event behind it forever.
+- **401 and 403 are exempt from that count and are never discarded.** Those mean
+  the integration is misconfigured, not that the data is bad; dropping real
+  events over a mistyped key would be data loss caused by a fixable error.
+
+Live tests must therefore assert *eventual* delivery, not single-pass delivery.
+A strict one-pass assertion failed against a real transient 400 while the SDK
+had behaved exactly correctly — all 55 events were still queued, none lost.
+
+## Batch size
+
+Verified accepted at 10, 20, 25, 30, 40 and 50 entries (8,692 bytes at 50). No
+size-based rejection was observed, so `maxBatchSize` stays at 50 to match
+intemptjs's `RequestBatcher`.
+
+## `type` is not validated
+
+A batch entry with `"type":"notARealType"` returns **201**, as does an entry
+with no `type` field at all. The discriminator is not enforced at ingestion.
+
+This is why `SessionModel` omits `type` entirely rather than inventing one:
+matching intemptjs's `SessionEventModel`, which has run in production for
+years, is safer than a value that merely looks tidier.
+
 ## Retry-After
 
 No `Retry-After` header was observed on any success or 4xx response. The
