@@ -514,3 +514,34 @@ extension PersonalizationTests {
         XCTAssertNil(choice.body)
     }
 }
+
+// MARK: - Untyped bridge for migrating off the Objective-C SDK
+
+extension PersonalizationTests {
+
+    /// The old SDK handed `[String: Any]` to its consumers. Those consumers
+    /// still exist, so a variant body has to be convertible without rewriting
+    /// them — including nested values and correct booleans.
+    func testBodyConvertsToAnUntypedDictionary() {
+        let response = """
+            {"choices":[{"variant":"1","experience":"2","name":"adon",
+              "body":{"type":"number","count":3,"live":true,"nested":{"a":1},"tags":["x","y"]}}]}
+            """
+        let json = JSONHandler.deserializeData(Data(response.utf8)) as! [String: Any]
+        let dict = Personalization.parseChoices(json)[0].body?.dictionaryValue
+
+        XCTAssertNotNil(dict)
+        XCTAssertEqual(dict?["type"] as? String, "number")
+        XCTAssertEqual(dict?["count"] as? Double, 3)
+        // A bool must survive as a bool, not as 1 — the old code branches on it.
+        XCTAssertEqual(dict?["live"] as? Bool, true)
+        XCTAssertEqual((dict?["nested"] as? [String: Any])?["a"] as? Double, 1)
+        XCTAssertEqual(dict?["tags"] as? [String], ["x", "y"])
+    }
+
+    func testDictionaryValueIsNilForNonObjects() {
+        XCTAssertNil(JSONValue.string("x").dictionaryValue)
+        XCTAssertNil(JSONValue.array([.number(1)]).dictionaryValue)
+        XCTAssertNil(JSONValue.null.dictionaryValue)
+    }
+}

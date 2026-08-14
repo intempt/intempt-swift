@@ -105,8 +105,19 @@ public enum JSONValue: Equatable, Sendable {
         }
     }
 
+    /// The value as an untyped dictionary, for call sites that already hand a
+    /// `[String: Any]` to existing code. Nil unless this is an object.
+    ///
+    /// Exists for migration off the Objective-C SDK, whose completion handlers
+    /// delivered `[String: Any]` and whose consumers are written against it.
+    /// Prefer the typed accessors in new code.
+    public var dictionaryValue: [String: Any]? {
+        guard case .object(let object) = self else { return nil }
+        return object.mapValues { $0.rawValue }
+    }
+
     /// Back to a `JSONSerialization`-compatible tree.
-    var rawValue: Any {
+    public var rawValue: Any {
         switch self {
         case .string(let s): return s
         case .number(let n): return n
