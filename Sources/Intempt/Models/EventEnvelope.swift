@@ -53,10 +53,21 @@ struct EventEnvelope: Equatable {
 protocol IntemptModel {
     /// `identify` · `group` · `alias` · `record` · `track` · `product` ·
     /// `consent` — matches intemptjs's model `type` field exactly.
+    ///
+    /// Empty means "omit the field", which only `SessionModel` does: intemptjs's
+    /// `SessionEventModel` carries no `type` at all.
     var type: String { get }
     /// Event title. intemptjs defaults several of these to "Identify".
     var name: String { get }
     func toPayload() -> [String: Any]
+
+    /// Declared here, not only in the extension below, so that a conforming
+    /// type can replace it and be honoured through an `IntemptModel`
+    /// existential. A method that exists ONLY in a protocol extension is
+    /// statically dispatched: `SessionModel`'s own version would be silently
+    /// ignored everywhere the SDK holds models as `IntemptModel`, which is
+    /// everywhere. Covered by a test.
+    func toEnvelopeEntry() -> [String: Any]
 }
 
 extension IntemptModel {
@@ -64,11 +75,12 @@ extension IntemptModel {
     /// Shape verified at intemptjs autoTracker.module.ts:161-183 and against
     /// push-source-service's DataRequests/DataRequest parsing.
     func toEnvelopeEntry() -> [String: Any] {
-        [
+        var entry: [String: Any] = [
             "name": name,
-            "type": type,
             "payload": [toPayload()],
         ]
+        if !type.isEmpty { entry["type"] = type }
+        return entry
     }
 }
 

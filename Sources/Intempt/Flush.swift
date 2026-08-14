@@ -56,14 +56,20 @@ final class Flush {
     private var inFlight = false
     private var waiters: [(Int) -> Void] = []
 
+    /// Only ever touched on the main thread — a `Timer` must be invalidated on
+    /// the run loop that scheduled it.
     private var timer: Timer?
+    /// The intent, readable from any thread. Separate from `timer` because
+    /// answering "is it running?" must never require hopping to main.
+    private let timerLock = ReadWriteLock(label: "com.intempt.flush.timer")
+    private var armed = false
 
     /// Seconds between automatic flushes. 0 disables the timer. Assigning while
     /// the timer is running re-arms it rather than leaving the old interval.
     var flushInterval: TimeInterval = APIConstants.flushInterval {
         didSet {
-            guard timer != nil || oldValue != flushInterval else { return }
-            if timer != nil { startTimer() }
+            guard oldValue != flushInterval, isTimerRunning else { return }
+            startTimer()
         }
     }
 
@@ -88,19 +94,37 @@ final class Flush {
         db.releaseAllClaims(.consents)
     }
 
-    deinit { timer?.invalidate() }
+    deinit {
+        // No hop to main: deinit may already be on it, and the timer holds no
+        // strong reference back to self (the closure is [weak self]).
+        timer?.invalidate()
+    }
 
     // MARK: - Timer
 
+    /// Arms the repeating flush timer on the main run loop.
+    ///
+    /// Every hop to main is `async`, never `sync`. `initialize` may be called
+    /// from a background queue while the main thread waits on that work — a
+    /// `DispatchQueue.main.sync` here deadlocks the app on launch. The existing
+    /// concurrent-initialize test caught exactly that.
     func startTimer() {
-        stopTimer()
-        guard flushInterval > 0 else { return }
         let interval = flushInterval
+        timerLock.write { armed = interval > 0 }
+        guard interval > 0 else { return stopTimer() }
 
-        let arm = { [weak self] in
+        onMain { [weak self] in
             guard let self else { return }
+            self.timer?.invalidate()
+            // Re-check: a stopTimer() queued behind this one would otherwise be
+            // undone by an arm that was already in flight.
+            guard self.timerLock.read({ self.armed }) else {
+                self.timer = nil
+                return
+            }
             let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-                self?.flushNow()
+                guard let self, self.timerLock.read({ self.armed }) else { return }
+                self.flushNow()
             }
             // .common, not .default: a scroll or a modal presentation puts the
             // main run loop into tracking mode, and a .default-mode timer stops
@@ -108,15 +132,19 @@ final class Flush {
             RunLoop.main.add(t, forMode: .common)
             self.timer = t
         }
-        if Thread.isMainThread { arm() } else { DispatchQueue.main.async(execute: arm) }
     }
 
     func stopTimer() {
-        let disarm = { [weak self] in
+        timerLock.write { armed = false }
+        onMain { [weak self] in
             self?.timer?.invalidate()
             self?.timer = nil
         }
-        if Thread.isMainThread { disarm() } else { DispatchQueue.main.sync(execute: disarm) }
+    }
+
+    /// Runs `work` on the main thread, inline when already there.
+    private func onMain(_ work: @escaping () -> Void) {
+        if Thread.isMainThread { work() } else { DispatchQueue.main.async(execute: work) }
     }
 
     // MARK: - Entry point
@@ -269,8 +297,6 @@ final class Flush {
     // MARK: - Test seams
 
     var consecutiveFailures: Int { queue.sync { policy.consecutiveFailures } }
-    var isTimerRunning: Bool {
-        if Thread.isMainThread { return timer != nil }
-        return DispatchQueue.main.sync { timer != nil }
-    }
+    /// Reads the intent flag, not the `Timer` — see `startTimer`.
+    var isTimerRunning: Bool { timerLock.read { armed } }
 }

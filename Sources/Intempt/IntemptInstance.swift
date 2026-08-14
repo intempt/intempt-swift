@@ -50,12 +50,18 @@ public final class IntemptInstance {
                 throw IntemptError.missingConfiguration(field: field)
             }
         }
+        // Resolves screen/scene facts on the main thread before any event is
+        // enqueued on a background queue.
+        AutomaticProperties.warm()
+
         return instancesLock.write {
             if let existing = instances[instanceName] { return existing }
             let created = IntemptInstance(
                 credentials: credentials, orgId: orgId, projectId: projectId,
                 sourceId: sourceId, instanceName: instanceName)
             instances[instanceName] = created
+            created.automatic.checkVersion()
+            created.flusher.startTimer()
             return created
         }
     }
@@ -86,6 +92,9 @@ public final class IntemptInstance {
     private let network: Network
     let flusher: Flush
     private let personalization: Personalization
+    var automatic: AutomaticEvents!
+    /// Held so its observers live as long as the instance; `deinit` removes them.
+    private var lifecycle: AppLifecycle!
 
     /// Sole owner of mutable state. Every public method funnels through it.
     private let stateQueue: DispatchQueue
@@ -117,9 +126,41 @@ public final class IntemptInstance {
         self.personalization = Personalization(
             network: network, credentials: credentials,
             orgId: orgId, projectId: projectId, sourceId: sourceId)
+
+        // `automatic` needs to call back into `self`, so it is built after all
+        // stored properties are initialised and captures self weakly.
+        let identity = self.identity
+        self.automatic = AutomaticEvents(
+            namespace: instanceName, store: storeOverride
+        ) { [weak self] name, data, userAttributes in
+            guard let self else { return }
+            self.enqueueAutomatic(
+                name: name, data: data, userAttributes: userAttributes,
+                sessionId: identity.sessionId)
+        }
+
+        self.lifecycle = AppLifecycle { [weak self] transition in
+            guard let self else { return }
+            self.automatic.note(transition)
+            switch transition {
+            case .background, .terminate:
+                // Hold a background assertion so a flush that starts as the app
+                // suspends is not frozen mid-request.
+                BackgroundTask.perform { done in
+                    self.flusher.flushNow { _ in done() }
+                }
+            case .foreground:
+                self.flusher.startTimer()
+            }
+        }
     }
 
     /// Test-only constructor: injects the store, database directory and network.
+    ///
+    /// Automatic events default to ALL OFF here, unlike production where
+    /// sessions are on. A test asserting "track() queued one event" should not
+    /// silently also be asserting session-start behaviour; the automatic path
+    /// has its own tests. Pass `automaticEvents:` to exercise it.
     static func makeForTesting(
         apiKey: String = "pfx.secret",
         orgId: String = "acme",
@@ -128,13 +169,17 @@ public final class IntemptInstance {
         instanceName: String = "test-\(UUID().uuidString)",
         store: UserDefaults,
         databaseDirectory: URL,
-        network: Network = Network()
+        network: Network = Network(),
+        automaticEvents: AutomaticEventOptions = AutomaticEventOptions(
+            sessions: false, versionChanges: false, appStateChanges: false)
     ) throws -> IntemptInstance {
-        IntemptInstance(
+        let instance = IntemptInstance(
             credentials: try IntemptCredentials(apiKey: apiKey),
             orgId: orgId, projectId: projectId, sourceId: sourceId,
             instanceName: instanceName, storeOverride: store,
             databaseDirectory: databaseDirectory, network: network)
+        instance.automaticEvents = automaticEvents
+        return instance
     }
 
     // MARK: - Identity accessors
@@ -251,7 +296,7 @@ public final class IntemptInstance {
     public func productAdd(productId: String, quantity: Int) -> Bool {
         enqueue { env in
             ProductModel(
-                envelope: env, name: "Product Add", productId: productId, quantity: quantity)
+                envelope: env, name: EventNames.productAdd, productId: productId, quantity: quantity)
         }
     }
 
@@ -259,7 +304,7 @@ public final class IntemptInstance {
     public func productView(productId: String) -> Bool {
         enqueue { env in
             ProductModel(
-                envelope: env, name: "Product View", productId: productId, quantity: nil)
+                envelope: env, name: EventNames.productView, productId: productId, quantity: nil)
         }
     }
 
@@ -269,7 +314,7 @@ public final class IntemptInstance {
         for p in products {
             let ok = enqueue { env in
                 ProductModel(
-                    envelope: env, name: "Product Ordered", productId: p.productId,
+                    envelope: env, name: EventNames.productOrdered, productId: p.productId,
                     quantity: p.quantity)
             }
             allOK = allOK && ok
@@ -386,10 +431,18 @@ public final class IntemptInstance {
     /// Single choke point: opt-out gate, property validation, identity rule,
     /// encoding, then persistence. Every entry point above goes through it.
     private func enqueue(_ make: (EventEnvelope) -> IntemptModel) -> Bool {
-        stateQueue.sync {
+        // Both of these run OUTSIDE stateQueue, and that is load-bearing.
+        // `noteActivity` may emit a session-start event, which re-enters this
+        // class's enqueue path — and `DispatchQueue.sync` on a serial queue
+        // cannot be re-entered. Doing it inside the lock deadlocks on the first
+        // event of every session. `IdentityManager` has its own lock, so
+        // ordering these before the barrier is safe.
+        identity.recordActivity()
+        automatic.noteActivity(sessionId: identity.sessionId)
+
+        return stateQueue.sync {
             guard !optedOut else { return false }
 
-            identity.recordActivity()
             let model = make(identity.makeEnvelope())
             let payload = model.toPayload()
 
@@ -418,6 +471,69 @@ public final class IntemptInstance {
             let inserted = db.insert(.events, data: data)
             db.trim(.events, to: QueueConstants.maxQueueSize)
             return inserted
+        }
+    }
+
+    /// Path for events the SDK generates itself.
+    ///
+    /// Deliberately does NOT call `automatic.noteActivity` — that is what emits
+    /// session start, and calling it here would recurse.
+    private func enqueueAutomatic(
+        name: String,
+        data: [String: IntemptType]?,
+        userAttributes: [String: IntemptType]?,
+        sessionId: String
+    ) {
+        stateQueue.sync {
+            guard !optedOut else { return }
+
+            let model: IntemptModel
+            if name == EventNames.sessionStart {
+                // intemptjs's shape: no type, eventId == sessionId, no pageId.
+                model = SessionModel(
+                    sessionId: sessionId,
+                    profileId: identity.profileId,
+                    name: name,
+                    data: data,
+                    userAttributes: userAttributes)
+            } else if let userAttributes {
+                model = RecordModel(
+                    envelope: identity.makeEnvelope(), name: name,
+                    userId: nil, accountId: nil, data: data,
+                    userAttributes: userAttributes, accountAttributes: nil)
+            } else {
+                model = TrackModel(
+                    envelope: identity.makeEnvelope(), name: name, data: data)
+            }
+
+            guard let encoded = JSONHandler.encodeAPIData(model.toEnvelopeEntry()) else {
+                IntemptLogger.shared.log(.warning, "automatic event '\(name)' dropped: encoding")
+                return
+            }
+            db.insert(.events, data: encoded)
+            db.trim(.events, to: QueueConstants.maxQueueSize)
+        }
+    }
+
+    // MARK: - Autocapture configuration
+
+    /// Which lifecycle events the SDK emits on its own.
+    ///
+    /// Only sessions are on by default. An SDK that silently starts writing
+    /// events the integrator never asked for is how an event-volume bill
+    /// surprises someone.
+    public var automaticEvents: AutomaticEventOptions {
+        get {
+            AutomaticEventOptions(
+                sessions: automatic.options.sessions,
+                versionChanges: automatic.options.versionChanges,
+                appStateChanges: automatic.options.appStateChanges)
+        }
+        set {
+            automatic.options = AutomaticEvents.Options(
+                sessions: newValue.sessions,
+                versionChanges: newValue.versionChanges,
+                appStateChanges: newValue.appStateChanges)
         }
     }
 

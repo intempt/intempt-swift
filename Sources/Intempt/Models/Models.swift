@@ -149,6 +149,47 @@ struct ProductModel: IntemptModel {
     }
 }
 
+// MARK: - Session
+
+/// Session start. Shaped to match intemptjs's `SessionEventModel`
+/// (session.model.ts) exactly, and it is deliberately unlike every other model:
+///
+///   - **No `type` field.** `SessionEventModel` declares only `name` and
+///     `payload`. Verified against production that a typeless entry is accepted
+///     (201). Also verified that ingestion does not validate `type` at all — a
+///     bogus value returns 201 too — so matching the shape the JS SDK has run in
+///     production is the safer choice than inventing one that merely looks
+///     tidier.
+///   - **`eventId` IS the `sessionId`.** Not an `ev_`-prefixed UUID. This makes
+///     the event naturally idempotent per session: a retry cannot create a
+///     second session-start.
+///   - **No `pageId`.**
+///
+/// Device facts travel in `userAttributes`, so they land on the profile rather
+/// than being stamped onto every event the way Mixpanel does.
+struct SessionModel: IntemptModel {
+    let sessionId: String
+    let profileId: String
+    let name: String
+    let data: [String: IntemptType]?
+    let userAttributes: [String: IntemptType]?
+
+    /// Empty on purpose — see the type note above. `toEnvelopeEntry()` omits
+    /// the field entirely rather than sending `"type":""`.
+    var type: String { "" }
+
+    func toPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "eventId": sessionId,
+            "sessionId": sessionId,
+            "profileId": profileId,
+        ]
+        if let data { payload["data"] = data }
+        if let userAttributes { payload["userAttributes"] = userAttributes }
+        return payload
+    }
+}
+
 // MARK: - Consent
 
 /// Binary accept/reject, at parity with intemptjs's `ConsentAction`
