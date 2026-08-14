@@ -173,10 +173,21 @@ enum EventKeys {
 
     // MARK: Not in any iOS schema
 
-    /// Sent as a profile attribute because the iOS AppInstallUpgrade schema
-    /// has no `userAttributes` block at all, unlike Android's app_install
-    /// which carries `userAttributes.device_token`. See Push.swift.
-    static let pushToken = "pushToken"
+    /// The APNs device-token attribute name, which is PER SOURCE.
+    ///
+    /// Mirrors the Android SDK exactly: `InstallOrUpgradeEvent.kt:45` builds
+    /// `"fcm_token_" + config.sourceId`, because `AndroidSourceInitialization`
+    /// renames the schema's placeholder `device_token` field to
+    /// `fcm_token_<sourceId>`. The name has to be constructed client-side or it
+    /// matches no column.
+    ///
+    /// A flat `pushToken` — which an earlier version sent — matches nothing at
+    /// all, and `destinations-processor` finds the attribute by the
+    /// `apns_token_` prefix.
+    static func apnsToken(sourceId: String) -> String {
+        "apns_token_\(sourceId)"
+    }
+
 
     /// Push attribution. No iOS collection is provisioned for push events, so
     /// these names are ours until one exists.

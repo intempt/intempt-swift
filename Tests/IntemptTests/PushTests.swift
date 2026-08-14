@@ -60,6 +60,53 @@ final class PushTests: IntemptTestCase {
         XCTAssertEqual(instance.queuedEventCount(), 0, "a bad token must not be sent")
     }
 
+    /// The attribute name must be `apns_token_<sourceId>`, mirroring the Android
+    /// SDK's `"fcm_token_" + config.sourceId` (InstallOrUpgradeEvent.kt:45).
+    ///
+    /// `AndroidSourceInitialization` renames the schema's placeholder
+    /// `device_token` field to `fcm_token_<sourceId>`, and the iOS source
+    /// initialisation now does the same with `apns_token_<sourceId>`. The name
+    /// therefore has to be built client-side — a flat `pushToken`, which an
+    /// earlier version sent, matches no column and is dropped after a 201.
+    func testTokenAttributeIsNamedPerSourceLikeAndroid() throws {
+        let instance = try IntemptInstance.makeForTesting(
+            sourceId: "1842928692221829120",
+            store: defaults, databaseDirectory: tempDir)
+
+        let token = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
+        XCTAssertTrue(instance.setPushToken(token))
+
+        let row = instance.db.read(.events, limit: 1)[0]
+        let entry = JSONHandler.deserializeData(row.data) as! [String: Any]
+        let payload = (entry["payload"] as! [[String: Any]])[0]
+        let attributes = payload["userAttributes"] as! [String: Any]
+
+        XCTAssertEqual(
+            attributes["apns_token_1842928692221829120"] as? String,
+            Push.hexString(from: token))
+        XCTAssertNil(attributes["pushToken"], "a flat name matches no column")
+        XCTAssertNil(attributes["device_token"], "that is the schema placeholder, not the wire name")
+    }
+
+    /// Same event title Android uses, so both platforms land in the collection
+    /// their source provisions.
+    func testTokenRidesTheInstallUpgradeEvent() throws {
+        let instance = try IntemptInstance.makeForTesting(
+            store: defaults, databaseDirectory: tempDir)
+        XCTAssertTrue(instance.setPushToken(Data(repeating: 0xAB, count: 32)))
+
+        let entry = JSONHandler.deserializeData(instance.db.read(.events, limit: 1)[0].data)
+            as! [String: Any]
+        XCTAssertEqual(entry["name"] as? String, "App Install/Upgrade")
+    }
+
+    func testKeyBuilderMatchesTheAndroidShape() {
+        XCTAssertEqual(EventKeys.apnsToken(sourceId: "123"), "apns_token_123")
+        // Android: "fcm_token_" + sourceId. Same construction, different prefix,
+        // and destinations-processor selects on the prefix.
+        XCTAssertTrue(EventKeys.apnsToken(sourceId: "123").hasPrefix("apns_token_"))
+    }
+
     func testInstanceAcceptsARealToken() throws {
         let instance = try IntemptInstance.makeForTesting(
             store: defaults, databaseDirectory: tempDir)
@@ -74,7 +121,9 @@ final class PushTests: IntemptTestCase {
 
         let payload = (entry["payload"] as! [[String: Any]])[0]
         let attributes = payload["userAttributes"] as? [String: Any]
-        XCTAssertEqual(attributes?["pushToken"] as? String, Push.hexString(from: token))
+        XCTAssertEqual(
+            attributes?[EventKeys.apnsToken(sourceId: instance.sourceId)] as? String,
+            Push.hexString(from: token))
     }
 
     // MARK: - Attribution

@@ -551,10 +551,9 @@ public final class IntemptInstance {
     /// `token.description` idiom has produced the literal "32 bytes" since
     /// iOS 13.
     ///
-    /// - Note: the iOS source schema has no device-token field today (Android's
-    ///   does). The token is sent as a `pushToken` profile attribute, which is
-    ///   the only place it can currently land; making it a first-class field is
-    ///   a backend change. See `Push.swift` for the detail.
+    /// Sent as `apns_token_<sourceId>` on an "App Install/Upgrade" event, which
+    /// is precisely how the Android SDK sends `fcm_token_<sourceId>`. The
+    /// destinations job finds it by the `apns_token_` prefix.
     @discardableResult
     public func setPushToken(_ deviceToken: Data) -> Bool {
         guard Push.isPlausible(deviceToken) else {
@@ -565,9 +564,13 @@ public final class IntemptInstance {
             return false
         }
         let hex = Push.hexString(from: deviceToken)
+        // Per-source attribute name, exactly as the Android SDK builds
+        // "fcm_token_<sourceId>". The source initialisation renames the
+        // schema's placeholder `device_token` field to this, so a flat name
+        // matches no column and the token is silently dropped after a 201.
         return record(
             eventTitle: EventNames.appInstallUpgrade,
-            userAttributes: [EventKeys.pushToken: hex])
+            userAttributes: [EventKeys.apnsToken(sourceId: sourceId): hex])
     }
 
     /// Reports that a push was opened. Call from

@@ -29,6 +29,10 @@
 //
 import Foundation
 
+#if canImport(UIKit) && !os(watchOS)
+    import UIKit
+#endif
+
 /// Emits lifecycle events. Owned by `IntemptInstance`; every emission goes
 /// through the instance's normal `enqueue` path, so opt-out and validation
 /// apply exactly as they do to a manual `track`.
@@ -131,6 +135,9 @@ final class AutomaticEvents {
         // none of those names exists in the schema, so every one of them was
         // silently dropped after ingestion returned 201.
         let buildType = Self.currentBuildType
+        // Android reports this on the same event and the iOS schema has the
+        // field, so an iOS install is otherwise missing a column Android fills.
+        let visibility = Self.appVisibilityState
 
         switch previous {
         case .none:
@@ -140,6 +147,7 @@ final class AutomaticEvents {
                     EventKeys.isUpgrade: false,
                     EventKeys.currentVersionCode: Self.versionCode(current),
                     EventKeys.currentBuildType: buildType,
+                    EventKeys.appVisibilityState: visibility,
                 ], nil)
         case .some(let old) where old != current:
             emit(
@@ -150,6 +158,7 @@ final class AutomaticEvents {
                     EventKeys.currentVersionCode: Self.versionCode(current),
                     EventKeys.previousBuildType: buildType,
                     EventKeys.currentBuildType: buildType,
+                    EventKeys.appVisibilityState: visibility,
                 ], nil)
         default:
             break  // same version, nothing to report
@@ -182,6 +191,22 @@ final class AutomaticEvents {
         guard let major = parts.first else { return 0 }
         let minor = parts.count > 1 ? parts[1] : 0
         return Double(major) + Double(minor) / 100.0
+    }
+
+    /// "foreground" or "background". Android sends its AppVisibilityState enum
+    /// on the same event; the iOS schema types the field as a string.
+    static var appVisibilityState: String {
+        #if canImport(UIKit) && !os(watchOS)
+            if Thread.isMainThread {
+                return UIApplication.shared.applicationState == .background
+                    ? "background" : "foreground"
+            }
+            // Reading applicationState off the main thread is unsafe, and an
+            // install event is enqueued from the instance queue.
+            return "foreground"
+        #else
+            return "foreground"
+        #endif
     }
 
     /// Android's `buildType` vocabulary, which the shared schema inherited.
