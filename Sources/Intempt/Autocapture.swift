@@ -261,10 +261,26 @@ extension Autocapture {
         }
 
         /// Whether a control reports a value change rather than a plain tap.
+        ///
+        /// tvOS ships a much smaller UIKit: `UISwitch`, `UISlider`, `UIStepper`
+        /// and `UIDatePicker` do not exist there at all, so naming them
+        /// unconditionally fails to compile for tvOS. The platform type-check
+        /// gate caught this; a macOS-only test run never would have, because
+        /// none of this file is compiled there.
         static func isValueChange(_ control: UIControl) -> Bool {
-            control is UISwitch || control is UISlider || control is UIStepper
-                || control is UISegmentedControl || control is UIDatePicker
-                || control is UITextField || control is UIPageControl
+            if control is UISegmentedControl || control is UITextField
+                || control is UIPageControl
+            {
+                return true
+            }
+            #if os(iOS)
+                if control is UISwitch || control is UISlider || control is UIStepper
+                    || control is UIDatePicker
+                {
+                    return true
+                }
+            #endif
+            return false
         }
 
         /// True when the SDK must not record anything about this view.
