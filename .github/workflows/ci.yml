@@ -122,6 +122,22 @@ jobs:
           brew install gitleaks
           gitleaks git . --redact --verbose --exit-code 1
 
+  podspec:
+    name: podspec lints
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Validates the spec CocoaPods will actually resolve, against the real
+      # tag on the real remote — not a local copy. This is what `pod trunk push`
+      # runs before accepting a release, so a failure here is a release that
+      # would have been rejected.
+      #
+      # --allow-warnings: the spec is warning-clean today, but a warning is not
+      # worth failing a release over. An error is.
+      - name: pod spec lint
+        run: pod spec lint Intempt.podspec --allow-warnings
+
   license:
     name: attribution present
     runs-on: ubuntu-latest
@@ -165,7 +181,7 @@ jobs:
   all-green:
     name: all-green
     runs-on: ubuntu-latest
-    needs: [test, compile-matrix, demo, lint, license]
+    needs: [test, compile-matrix, demo, lint, license, podspec]
     if: always()
     steps:
       # Branch protection points at this single job, so adding a job above
