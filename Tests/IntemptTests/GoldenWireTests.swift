@@ -51,7 +51,10 @@ final class GoldenWireTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
         XCTAssertEqual(
             request.value(forHTTPHeaderField: "Authorization"),
-            "Basic cGtfbGl2ZV9hYmM6czNjcjN0",
+            // base64("examplePrefix:exampleSecret"). Computed independently of
+            // the code under test, so it still checks the encoding rather than
+            // agreeing with whatever the SDK produced.
+            "Basic ZXhhbXBsZVByZWZpeDpleGFtcGxlU2VjcmV0",
             "Basic base64(prefix:secret), matching intemptjs")
 
         // --- Body --------------------------------------------------------
