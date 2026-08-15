@@ -13,7 +13,11 @@ import XCTest
 /// suite. This is what stops that.
 final class GoldenWireTests: XCTestCase {
 
-    private let creds = try! IntemptCredentials(apiKey: "pk_live_abc.s3cr3t")
+    // Shaped like a key and deliberately not shaped like a real one. The
+    // previous fixture began "pk_live_", which is the prefix a live Stripe-style
+    // credential uses, so the secret scanner matched it as generic-api-key —
+    // correctly, on its face. A fixture only has to satisfy prefix.secret.
+    private let creds = try! IntemptCredentials(apiKey: "examplePrefix.exampleSecret")
 
     /// Deterministic identity so the fixture is stable.
     private let env = EventEnvelope(

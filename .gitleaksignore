@@ -1,0 +1,15 @@
+# One historical finding, not a blanket allowlist.
+#
+# GoldenWireTests used the fixture "pk_live_abc.s3cr3t". It is not a credential —
+# it never authenticated anything, and the test only needs a value of the form
+# prefix.secret. But "pk_live_" is the prefix a live Stripe-style key carries, so
+# gitleaks' generic-api-key rule matched it, correctly on its face.
+#
+# The fixtures are now "examplePrefix.exampleSecret", so nothing committed from
+# here on matches. The scan reads full history, so the original commit keeps
+# reporting until that history is rewritten; this pins the single fingerprint
+# rather than muting the rule, a path, or a file.
+#
+# Remove this line if the branch is ever squashed or rewritten — it stops being
+# needed the moment that commit is gone.
+fe6289aea5cffa03c02c4a2fccc8381a1510c910:Tests/IntemptTests/GoldenWireTests.swift:generic-api-key:16

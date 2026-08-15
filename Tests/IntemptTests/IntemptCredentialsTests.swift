@@ -5,9 +5,12 @@ import XCTest
 final class IntemptCredentialsTests: XCTestCase {
 
     func testValidKeySplitsIntoPrefixAndSecret() throws {
-        let c = try IntemptCredentials(apiKey: "pk_live_abc123.s3cr3tvalue")
-        XCTAssertEqual(c.prefix, "pk_live_abc123")
-        XCTAssertEqual(c.secret, "s3cr3tvalue")
+        // Not "pk_live_...": that prefix is what a live Stripe-style credential
+        // uses, and the secret scanner matches it on sight. The assertion here
+        // is about splitting on the first dot, which any pair exercises.
+        let c = try IntemptCredentials(apiKey: "examplePrefix123.exampleSecretValue")
+        XCTAssertEqual(c.prefix, "examplePrefix123")
+        XCTAssertEqual(c.secret, "exampleSecretValue")
     }
 
     /// Must match what auth issues and what intemptjs sends.
