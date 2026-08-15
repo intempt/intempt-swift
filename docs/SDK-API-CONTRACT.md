@@ -131,11 +131,19 @@ discards queued events.
 optIn()
 optOut()
 hasOptedOut() -> Bool
-isUserOptIn() -> Bool
+isOptedIn() -> Bool
 ```
 
 These names are contractual. Android's `Tracking.start()` / `Tracking.stop()` /
 `isTrackingEnabled()` are not conformant.
+
+`isOptedIn()` is the agreed name, decided 2026-08-15. An earlier draft of this document
+said `isUserOptIn()`, following Swift. It is being changed **against** the canonical SDK
+on purpose: `isOptedIn` is the correct English — a past participle, "is the user opted in"
+— where `isUserOptIn` reads as a noun phrase, and it is the odd one out against every
+comparable SDK. Three of the five SDKs already ship `isOptedIn` and none of the three has
+published, so the cost is symmetric and the decision was made on the name being better
+rather than on which side was cheaper to move. Swift and Android change.
 
 `optOut()` MUST discard already-queued events, not merely set a flag. Setting a flag
 leaves events collected before the objection to be uploaded after it. Queued **consent**
@@ -306,9 +314,58 @@ nobody "fixes" them into conformance.
 | `consent.grant()` / `consent.revoke()` | Grant and revoke are genuinely different writes. The collapsed `consent(action:)` shape is what 1.x moved away from |
 | `trackBatch`, `close`, `buffered`, `setConfig` | Server concerns — connection lifetime and batching — with no client analogue |
 
-`optIn()` / `optOut()` are shared. Node additionally exposes `isOptedIn()`, which is the
-inverse getter this contract calls `isUserOptIn()`; the names should converge, and that is
-a real divergence rather than a structural one.
+`optIn()` / `optOut()` / `isOptedIn()` are shared, and the server SDKs already have the
+agreed name — see [Opt in / out](#opt-in--out). This was the one divergence in this
+section where a server imposed nothing, which is why it was resolved by renaming the
+clients rather than by blessing a split.
+
+## Credential handling
+
+The API key is `prefix.secret`. Three rules, all contractual, because three of the five
+SDKs got this wrong independently — which makes it a contract problem rather than five
+separate bugs.
+
+**1. The parsed credential type is not public.** An integrator has no reason to read it
+back, and every public accessor is a path to a log line.
+
+**2. A credential type must redact itself in every printing path the language has.** Not
+just the obvious one. Swift needed `CustomStringConvertible` *and* `CustomReflectable`,
+because `dump()` and any Mirror-based logger walk stored properties directly and skip
+`description` entirely — a test caught that after the first fix looked complete.
+
+The equivalent per language:
+
+| Language | Redact | Because |
+|---|---|---|
+| Swift | `CustomStringConvertible` + `CustomReflectable` | `dump()` bypasses `description` |
+| Kotlin | override `toString()` on any `data class` holding it | the generated `toString()` prints every property |
+| PHP | avoid `public readonly` on the key; `__debugInfo()` | `print_r()` and `var_dump()` walk public properties |
+| Python | `__repr__` | `repr()` on a config object prints the key |
+
+**3. An error never carries key material.** `malformedAPIKey(length:)` carries the length,
+not the key. An `Error` carrying the raw key ends up in integrator logs and crash
+reporters — outside our control forever.
+
+Each SDK carries a guard test asserting that a config or credential dump does not contain
+the secret. Plant the secret in a dump and watch the test fail before trusting it.
+
+### Known state
+
+| SDK | State |
+|---|---|
+| Swift | conformant — credentials type is internal, redacts through both paths, errors carry length only |
+| Android | **latent gap** — `IntemptConfigs` is an `internal data class` with `val apiKey`, so the generated `toString()` prints it. Not currently logged, and absent from `app.api`, so nothing leaks today. One future `logger.debug("configs: $configs")` changes that |
+| PHP | being fixed — `public readonly string $apiKey` printed the secret through `print_r()` |
+| Python | being fixed — `api_key` on the resolved config printed through `repr()` |
+| Node | clean, by luck of its type shape rather than by design |
+
+### Beyond the SDK's control, but state it
+
+Some runtimes copy call arguments into stack traces, so the integrator's own
+`Intempt(apiKey: …)` frame carries the key into every later exception. PHP does this
+unless `zend.exception_ignore_args=1`. An SDK cannot fix it from inside; it can measure it
+and document the mitigation as fact rather than as advice. Worth checking whether any JVM
+or Apple crash reporter does the equivalent.
 
 ## Licensing
 
