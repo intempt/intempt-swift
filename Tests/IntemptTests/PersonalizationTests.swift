@@ -39,18 +39,7 @@ final class PersonalizationTests: IntemptTestCase {
 
     // MARK: - Experiments: request shape
 
-
-
-
-
     // MARK: - Experiments: response parsing
-
-
-
-
-
-
-
 
     // MARK: - Products: the 443x defect
 

@@ -236,7 +236,6 @@ final class LiveContractTests: IntemptTestCase {
 
     // MARK: - Personalization
 
-
     /// The 443x defect, proven live: the same request with and without `fields`
     /// differs by two orders of magnitude because the unfielded response
     /// carries raw ML embedding vectors.

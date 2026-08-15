@@ -229,4 +229,3 @@ public struct AutomaticEventOptions: Equatable, Sendable {
         self.appStateChanges = appStateChanges
     }
 }
-
