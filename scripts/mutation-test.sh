@@ -49,7 +49,7 @@ MUTANTS=(
 "Sources/Intempt/Flush.swift|db.setFlag(.events, ids: goodIds, to: true)|db.setFlag(.events, ids: goodIds, to: false)|a batch must be CLAIMED before it is sent; without the claim a concurrent flush sends the same rows twice"
 "Sources/Intempt/IntemptDB.swift|SET flag = 0 WHERE flag = 1|SET flag = 1 WHERE flag = 0|startup must RELEASE claims stranded by a crash; inverting it strands every unsent row permanently"
 "Sources/Intempt/IntemptInstance.swift|case .reject: optOut()|case .reject: break|consent(.reject) must ENFORCE, not merely record — the old SDK gated nothing (F-42)"
-"Sources/Intempt/Flush.swift|self.db.setFlag(.events, ids: goodIds, to: false)\n                    self.strikes.removeValue|self.db.setFlag(.events, ids: goodIds, to: true)\n                    self.strikes.removeValue|a retryable failure must RELEASE the claim; leaving rows claimed makes them invisible to every later pass"
+"Sources/Intempt/Flush.swift|self.db.setFlag(.events, ids: goodIds, to: false)|self.db.setFlag(.events, ids: goodIds, to: true)|a retryable failure must RELEASE the claim; leaving rows claimed makes them invisible to every later pass"
 "Sources/Intempt/JSONHandler.swift|CFGetTypeID(num) == CFBooleanGetTypeID()|CFGetTypeID(num) != CFBooleanGetTypeID()|a Bool must serialise as a JSON boolean; CFBoolean bridges to NSNumber and would otherwise go out as 1"
 "Sources/Intempt/Network.swift|request.setValue(credentials.basicAuthHeader, forHTTPHeaderField: \"Authorization\")|request.setValue(credentials.basicAuthHeader, forHTTPHeaderField: \"X-Authorization\")|the Basic auth header is what authenticates every request; a renamed header is a 401 on everything"
 "Sources/Intempt/IdentityManager.swift|_sessionEventCount = 0|_sessionEventCount = 1|logOut must clear session state; a carried-over count attributes the previous user's activity to the next one"
@@ -75,7 +75,8 @@ for entry in "${MUTANTS[@]}"; do
         continue
     fi
     if ! grep -qF "$search" "$file"; then
-        echo "  SKIP     ${file##*/}: '$search' not present — the mutant is stale, fix it"
+        echo "  STALE    ${file##*/}: '$search' not present — the code moved and this mutant tests nothing"
+        invalid=$((invalid+1))
         continue
     fi
 
