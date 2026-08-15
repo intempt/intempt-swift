@@ -53,8 +53,29 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.app
+
+      # Deliberately NOT pinning Xcode. `xcode-select -s /Applications/Xcode_16.app`
+      # was here and it broke this job: that Xcode's iOS runtime is not installed
+      # on the current runner image, so xcodebuild reported zero simulator
+      # destinations and only a device placeholder asking for iOS 18.0. The
+      # default Xcode is the one whose runtime the image actually ships.
+      - name: Show toolchain and pick a simulator
+        id: sim
+        run: |
+          xcodebuild -version
+          echo "--- available iOS simulators ---"
+          xcrun simctl list devices available | grep -A100 -- '-- iOS' | head -20 || true
+          # Resolve a concrete UDID rather than naming a device. A hard-coded
+          # name is a guess about the image, and it is exactly what failed here.
+          udid=$(xcrun simctl list devices available -j \
+            | python3 -c "import json,sys;d=json.load(sys.stdin)['devices'];print(next((x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x.get('isAvailable')),''))")
+          if [ -z "$udid" ]; then
+            echo "::error::no iOS simulator is available on this runner"
+            exit 1
+          fi
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          echo "using simulator $udid"
+
       # The ONLY place the SDK actually runs on iOS. Everything else in this
       # workflow type-checks; this executes autocapture, the UIKit swizzles,
       # the background-task assertion and APNs formatting on a real simulator.
@@ -69,7 +90,7 @@ jobs:
           xcodebuild test \
             -project IntemptDemo/IntemptDemo.xcodeproj \
             -scheme IntemptDemo \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             CODE_SIGNING_ALLOWED=NO \
             | xcbeautify --quiet
 
@@ -83,9 +104,19 @@ jobs:
       - name: swift-format
         run: swift format lint --recursive --strict Sources Tests
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # The binary, not gitleaks/gitleaks-action@v2. That action refuses to run
+        # for an organization without a paid licence — "[intempt] is an
+        # organization. License key is required." — so it failed on every run
+        # here without ever scanning anything.
+        #
+        # The other Intempt repos run the same scanner from its Docker image
+        # (see destinations-processor/.github/workflows/security.yaml). Docker is
+        # not available on macOS runners, so this installs the binary instead and
+        # keeps the flags identical: full history, redacted output, non-zero exit
+        # on any finding.
+        run: |
+          brew install gitleaks
+          gitleaks git . --redact --verbose --exit-code 1
 
   license:
     name: attribution present
