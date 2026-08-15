@@ -60,7 +60,10 @@ final class AutomaticEvents {
     /// Separate from `emit` because a session end carries the id of the session
     /// that ENDED, not the current one — routing it through the normal path
     /// would stamp it with the new session.
-    var emitSessionEnd: (_ sessionId: String, _ data: [String: IntemptType], _ userAttributes: [String: IntemptType]) -> Void = { _, _, _ in }
+    var emitSessionEnd:
+        (_ sessionId: String, _ data: [String: IntemptType], _ userAttributes: [String: IntemptType]) -> Void = {
+            _, _, _ in
+        }
 
     private let lock = ReadWriteLock(label: "com.intempt.autoevents")
     private var lastSessionId: String?

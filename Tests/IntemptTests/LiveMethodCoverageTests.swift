@@ -200,7 +200,8 @@ final class LiveMethodCoverageTests: IntemptTestCase {
             switch result {
             case .success(let products):
                 productsOK = true
-                productsDetail = "\(products.count) product(s): "
+                productsDetail =
+                    "\(products.count) product(s): "
                     + products.compactMap(\.title).joined(separator: ", ")
             case .failure(let error):
                 // A feed-id problem is acceptable on a project without that feed;

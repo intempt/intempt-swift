@@ -67,7 +67,11 @@ final class LoggerTests: XCTestCase {
 
     func testMessageIsNotBuiltWhenLevelDisabled() {
         var built = false
-        IntemptLogger.shared.log(.debug, { built = true; return "expensive" }())
+        IntemptLogger.shared.log(
+            .debug,
+            {
+                built = true; return "expensive"
+            }())
         XCTAssertFalse(built, "autoclosure must not evaluate when the level is off")
     }
 }

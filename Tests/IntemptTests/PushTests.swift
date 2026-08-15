@@ -95,7 +95,8 @@ final class PushTests: IntemptTestCase {
             store: defaults, databaseDirectory: tempDir)
         XCTAssertTrue(instance.setPushToken(Data(repeating: 0xAB, count: 32)))
 
-        let entry = JSONHandler.deserializeData(instance.db.read(.events, limit: 1)[0].data)
+        let entry =
+            JSONHandler.deserializeData(instance.db.read(.events, limit: 1)[0].data)
             as! [String: Any]
         XCTAssertEqual(entry["name"] as? String, "App Install/Upgrade")
     }

@@ -200,7 +200,6 @@ enum EventKeys {
         "apns_token_\(sourceId)"
     }
 
-
     /// Push attribution. No iOS collection is provisioned for push events, so
     /// these names are ours until one exists.
     static let campaignId = "campaignId"

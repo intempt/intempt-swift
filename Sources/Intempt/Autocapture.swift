@@ -99,8 +99,7 @@ public final class Autocapture {
 
     public private(set) var options: AutocaptureOptions
 
-    init(options: AutocaptureOptions = .none, emit: @escaping (String, [String: IntemptType]) -> Void)
-    {
+    init(options: AutocaptureOptions = .none, emit: @escaping (String, [String: IntemptType]) -> Void) {
         self.options = options
         self.emit = emit
     }

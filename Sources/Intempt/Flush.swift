@@ -290,7 +290,8 @@ final class Flush {
             return
         }
 
-        let detail = IntemptError.serverMessages(from: body)?.joined(separator: "; ")
+        let detail =
+            IntemptError.serverMessages(from: body)?.joined(separator: "; ")
             ?? "no message"
         IntemptLogger.shared.log(
             .error,

@@ -42,8 +42,7 @@ final class IdentityManager {
     private var _pageId: String
     private var _lastActivity: Date
 
-    init(namespace: String, store: UserDefaults = .standard, clock: @escaping () -> Date = Date.init)
-    {
+    init(namespace: String, store: UserDefaults = .standard, clock: @escaping () -> Date = Date.init) {
         self.store = store
         self.clock = clock
         let key = "\(Key.profileId).\(namespace)"

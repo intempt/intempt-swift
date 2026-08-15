@@ -51,7 +51,7 @@ final class RetryPolicyTests: XCTestCase {
 
     func testExponentialCurveIsClamped() {
         let p = policy(jitter: 0)
-        XCTAssertEqual(p.backoff(for: 1), 60)   // 2^0 * 60
+        XCTAssertEqual(p.backoff(for: 1), 60)  // 2^0 * 60
         XCTAssertEqual(p.backoff(for: 2), 120)  // 2^1 * 60
         XCTAssertEqual(p.backoff(for: 3), 240)
         XCTAssertEqual(p.backoff(for: 4), 480)
