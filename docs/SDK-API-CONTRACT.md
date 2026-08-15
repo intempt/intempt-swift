@@ -162,13 +162,39 @@ flushInterval                          // seconds, settable; 0 disables the time
 ## Personalization
 
 ```
-experiments(names?, groups?, optimizationType?, productId?) -> Result<[ExperimentChoice]>
 products(feedId, count = 10, fields = defaultFeedFields, productId?) -> Result<[ProductRecommendation]>
 ```
 
-`OptimizationType` is `experiment` or `personalization` — one method, one endpoint, a
-discriminator. Two provider objects with identical method sets is the anti-pattern this
-replaces.
+`products()` is settled. Android already has the same capability under a different name —
+`recommendation(id, quantity, fields, productId)` against `/feeds/{id}/data` — so this is
+a rename, not new work.
+
+### `experiments()` — DISPUTED, do not build to this yet
+
+```
+experiments(names?, groups?, optimizationType?, productId?) -> Result<[ExperimentChoice]>
+```
+
+Two documents currently contradict each other, and this section is **not** authoritative
+until that is resolved:
+
+- `intempt-swift` implements `experiments()`, and this contract was drafted from it.
+- `intempt-android/CLAUDE.md` has a section titled *"Experiments and personalizations are
+  not in this SDK"*, stating they are an intemptjs capability and that
+  `ModificationProvider`, `Intempt.experiment` and `Intempt.personalization` were
+  **deliberately removed**. `app/api/app.api` confirms the removal — only
+  `recommendation()` remains.
+
+So this is a **product decision about which surfaces belong in a mobile SDK**, not an
+engineering divergence, and it has three possible answers:
+
+1. Android re-adds it — the contract wins and the removal is reversed.
+2. Swift removes it — Android's decision was right and Swift over-built.
+3. It is genuinely platform-divergent and moves to accepted divergences with a reason.
+
+Until this is decided, neither SDK should build to this section. `OptimizationType`
+(`experiment` / `personalization`) is recorded here as the shape *if* answer 1 wins: one
+method with a discriminator, rather than two provider objects with identical method sets.
 
 `ExperimentChoice` carries `experience`, `variant`, `target?`, `name?` and an untyped
 variant payload. `name` is nil for `choose-web` responses, which return ids only.
@@ -225,7 +251,7 @@ Three rules, all contractual:
 | Platform | Options | Notes |
 |---|---|---|
 | Swift | `screens`, `taps`, `controlChanges`, `screenExits`, `rawTouches` | UIKit-shaped. `taps` and `rawTouches` are deliberately separate — see rule 2 |
-| Android | `isTouchEnabled`, `isTextCaptureEnabled`, `isAutoCaptureEnabled` | Read from the config asset today; must become runtime-settable |
+| Android | `isTouchEnabled`, `isTextCaptureEnabled`, `isAutoCaptureEnabled` | Config asset only. **No runtime setter exists, not even an internal one** — making these settable is a Dagger-graph change, not a property, so it will not land alongside the capture surface |
 | React Native | maps to `screenViews`, `controlInteractions` only | `rawTouches` has no cross-platform meaning |
 
 Android's autocapture options being config-file-only is a conformance gap, the same one
