@@ -371,6 +371,48 @@ The equivalent per language:
 not the key. An `Error` carrying the raw key ends up in integrator logs and crash
 reporters — outside our control forever.
 
+**4. Nothing hands the credential back.** Rules 1–3 govern what gets *printed*. A getter
+is a different failure with the same consequence: nothing prints it, it is handed out on
+request.
+
+`intempt-android` shipped `QueueConfig.getAuthorization()` returning the base64 ingestion
+credential in its published API surface. It is the second occurrence — `ConfigManagerService.token()`
+was the first, already recorded as fixed in that repo's `CLAUDE.md` — and it came back
+inside the vendored queue package where nobody was looking. Every caller was already in
+the same package, so package-private removed it at zero cost. It was public for no reason
+at all.
+
+### Grep the machine-readable surface, do not reason about it
+
+Reading for this does not work. A reviewer only catches `getAuthorization` if they happen
+to know it means "the key" while scanning a 448-line ABI dump. Grep the *declared* surface
+instead:
+
+```
+apikey|api_key|secret|token|authorization|credential|password|bearer
+```
+
+| SDK | Surface to grep |
+|---|---|
+| Android | `app/api/app.api` (binary-compatibility-validator) |
+| React Native | `lib/typescript/*.d.ts` (emitted, not source) |
+| Swift | the public symbol list |
+
+A hit is not automatically a defect — the credential is an *input* to `initialize()` on
+every platform, and that is unavoidable. What matters is direction: **inputs are fine,
+getters are not.**
+
+**One honest limit, and state it in the test.** A guard test reading a checked-in dump
+does not catch a source-level regression on its own — the dump is stale until regenerated.
+What protects is a two-step chain, and both halves need verifying separately:
+
+1. the ABI check fails on the drift, and runs in CI
+2. the guard test fails on the regenerated dump
+
+Android verified both — `apiCheck` exits 1 on `+ public fun getAuthorization`, and
+planting an accessor line turned 1 of 5 tests red. Without step 1, step 2 is a green test
+that proves less than it appears to.
+
 Each SDK carries a guard test asserting that a config or credential dump does not contain
 the secret. Plant the secret in a dump and watch the test fail before trusting it.
 
@@ -382,7 +424,8 @@ the secret. Plant the secret in a dump and watch the test fail before trusting i
 | Android | **latent gap** — `IntemptConfigs` is an `internal data class` with `val apiKey`, so the generated `toString()` prints it. Not currently logged, and absent from `app.api`, so nothing leaks today. One future `logger.debug("configs: $configs")` changes that |
 | PHP | being fixed — `public readonly string $apiKey` printed the secret through `print_r()` |
 | Python | being fixed — `api_key` on the resolved config printed through `repr()` |
-| Node | clean, by luck of its type shape rather than by design |
+| Node | clean, but by luck of its type shape rather than by design |
+| React Native | conformant — grepped `lib/typescript/*.d.ts`: `apiKey` appears only as an input to `init()`, no getters. The JavaScript layer never retains it; `IntemptInstance` holds only the instance name |
 
 ### Beyond the SDK's control, but state it
 
