@@ -45,6 +45,10 @@ MUTANTS=(
 "Sources/Intempt/IntemptDB.swift|ORDER BY time ASC|ORDER BY time DESC|eviction must drop the OLDEST rows; dropping newest throws away what just happened and keeps stale data"
 "Sources/Intempt/EventNames.swift|isValueChange ? editField : action|isValueChange ? action : editField|a control value change is Edit Field and a press is Action; swapping them mislabels every interaction"
 "Sources/Intempt/IdentityManager.swift|>= Self.sessionTimeout|> Self.sessionTimeout * 1000|the idle window is what ends a session; widening it means sessions never roll"
+"Sources/Intempt/Flush.swift|db.setFlag(.events, ids: goodIds, to: true)|db.setFlag(.events, ids: goodIds, to: false)|a batch must be CLAIMED before it is sent; without the claim a concurrent flush sends the same rows twice"
+"Sources/Intempt/IntemptDB.swift|SET flag = 0 WHERE flag = 1|SET flag = 1 WHERE flag = 0|startup must RELEASE claims stranded by a crash; inverting it strands every unsent row permanently"
+"Sources/Intempt/IntemptInstance.swift|case .reject: optOut()|case .reject: break|consent(.reject) must ENFORCE, not merely record — the old SDK gated nothing (F-42)"
+"Sources/Intempt/Flush.swift|case .keepAndRetry:|case .keepAndRetry where false:|a retryable failure must release the claim; leaving rows claimed makes them invisible to every later pass"
 )
 
 restore() {
