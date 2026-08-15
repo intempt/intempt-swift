@@ -34,6 +34,7 @@ fi
 
 killed=0
 survived=0
+invalid=0
 declare -a SURVIVORS
 
 # file | search | replace | invariant it breaks
@@ -78,6 +79,17 @@ for entry in "${MUTANTS[@]}"; do
     # Only the first occurrence, so the mutant stays a single defect.
     perl -0pi -e "s/\Q$search\E/$replace/" "$file"
 
+    # A mutant that does not COMPILE is not a killed mutant — the suite never
+    # ran. Counting it as killed inflates the score with defects no assertion
+    # ever saw, which is the exact failure this whole script exists to prevent.
+    if ! swift build --build-tests > /tmp/mutation-build.log 2>&1; then
+        echo "  INVALID  ${file##*/}: $search -> $replace (does not compile)"
+        invalid=$((invalid+1))
+        restore "$file"
+        trap - EXIT
+        continue
+    fi
+
     if swift test --parallel > /tmp/mutation-run.log 2>&1; then
         survived=$((survived+1))
         SURVIVORS+=("${file##*/}: $search -> $replace
@@ -95,8 +107,9 @@ done
 total=$((killed+survived))
 echo
 echo "killed $killed / $total"
+[ "$invalid" -ne 0 ] && echo "INVALID $invalid — mutants that did not compile; they prove nothing, fix them"
 
-if [ "$survived" -ne 0 ]; then
+if [ "$survived" -ne 0 ] || [ "$invalid" -ne 0 ]; then
     echo
     echo "SURVIVING MUTANTS — the suite did not notice these defects:"
     for s in "${SURVIVORS[@]}"; do
