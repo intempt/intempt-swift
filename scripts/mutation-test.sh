@@ -52,7 +52,7 @@ MUTANTS=(
 "Sources/Intempt/Flush.swift|self.db.setFlag(.events, ids: goodIds, to: false)\n                    self.strikes.removeValue|self.db.setFlag(.events, ids: goodIds, to: true)\n                    self.strikes.removeValue|a retryable failure must RELEASE the claim; leaving rows claimed makes them invisible to every later pass"
 "Sources/Intempt/JSONHandler.swift|CFGetTypeID(num) == CFBooleanGetTypeID()|CFGetTypeID(num) != CFBooleanGetTypeID()|a Bool must serialise as a JSON boolean; CFBoolean bridges to NSNumber and would otherwise go out as 1"
 "Sources/Intempt/Network.swift|request.setValue(credentials.basicAuthHeader, forHTTPHeaderField: \"Authorization\")|request.setValue(credentials.basicAuthHeader, forHTTPHeaderField: \"X-Authorization\")|the Basic auth header is what authenticates every request; a renamed header is a 401 on everything"
-"Sources/Intempt/IdentityManager.swift|_sessionId = \"se_\" + UUID().uuidString|_sessionId = _sessionId.isEmpty ? \"se_x\" : _sessionId|logOut must rotate the SESSION as well as the profile, or the next user inherits the previous session"
+"Sources/Intempt/IdentityManager.swift|_sessionEventCount = 0|_sessionEventCount = 1|logOut must clear session state; a carried-over count attributes the previous user's activity to the next one"
 "Sources/Intempt/Flush.swift|db.read(.consents, limit: 1, flag: false)|db.read(.consents, limit: 1, flag: true)|consents drain from the unclaimed set; reading claimed rows means a withdrawal is never transmitted"
 )
 
