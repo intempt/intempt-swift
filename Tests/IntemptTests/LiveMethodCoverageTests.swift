@@ -101,7 +101,7 @@ final class LiveMethodCoverageTests: IntemptTestCase {
         let sessionId = intempt.getSessionId()
         check("getSessionId", sessionId, sessionId.hasPrefix("se_"))
         check("sdkVersion", intempt.sdkVersion, !intempt.sdkVersion.isEmpty)
-        check("isUserOptIn", "\(intempt.isUserOptIn())", intempt.isUserOptIn())
+        check("isOptedIn", "\(intempt.isOptedIn())", intempt.isOptedIn())
         check("hasOptedOut", "\(intempt.hasOptedOut())", !intempt.hasOptedOut())
 
         // MARK: Enqueue — every tracking method

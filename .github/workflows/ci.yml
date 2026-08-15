@@ -105,6 +105,12 @@ jobs:
       - name: Version sources agree
         run: ./scripts/check-version-sync.sh
 
+      # The contract is a description and nothing enforced it. A rename here
+      # does not break a Swift build — it breaks the React Native bridge at
+      # runtime, on someone else's machine, later.
+      - name: Public surface matches the contract
+        run: ./scripts/check-contract-conformance.sh
+
       - name: swift-format
         run: swift format lint --recursive --strict Sources Tests
       - name: gitleaks

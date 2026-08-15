@@ -203,7 +203,14 @@ public final class IntemptInstance {
     // MARK: - Opt in / out
 
     public func hasOptedOut() -> Bool { stateQueue.sync { optedOut } }
-    public func isUserOptIn() -> Bool { !hasOptedOut() }
+    /// Whether collection is currently permitted.
+    ///
+    /// The name the cross-SDK contract settled on, so the same call reads the
+    /// same way through a React Native bridge as it does here.
+    public func isOptedIn() -> Bool { !hasOptedOut() }
+
+    @available(*, deprecated, renamed: "isOptedIn()")
+    public func isUserOptIn() -> Bool { isOptedIn() }
 
     /// Stops collection AND discards everything already collected. Merely
     /// setting a flag — which is all intemptjs does — leaves queued events to

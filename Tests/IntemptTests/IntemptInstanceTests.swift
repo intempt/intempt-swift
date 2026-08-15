@@ -155,7 +155,7 @@ final class IntemptInstanceTests: XCTestCase {
     func testOptOutStopsCollection() {
         sdk.optOut()
         XCTAssertTrue(sdk.hasOptedOut())
-        XCTAssertFalse(sdk.isUserOptIn())
+        XCTAssertFalse(sdk.isOptedIn())
         XCTAssertFalse(sdk.track(eventTitle: "blocked"))
         XCTAssertEqual(sdk.queuedEventCount(), 0)
     }
@@ -182,7 +182,7 @@ final class IntemptInstanceTests: XCTestCase {
     func testOptInResumesCollection() {
         sdk.optOut()
         sdk.optIn()
-        XCTAssertTrue(sdk.isUserOptIn())
+        XCTAssertTrue(sdk.isOptedIn())
         XCTAssertTrue(sdk.track(eventTitle: "allowed"))
         XCTAssertEqual(sdk.queuedEventCount(), 1)
     }
@@ -220,7 +220,7 @@ final class IntemptInstanceTests: XCTestCase {
     func testConsentAcceptOptsIn() {
         sdk.optOut()
         XCTAssertTrue(sdk.consent(action: .accept, validUntil: 0))
-        XCTAssertTrue(sdk.isUserOptIn())
+        XCTAssertTrue(sdk.isOptedIn())
         XCTAssertTrue(sdk.track(eventTitle: "allowed"))
     }
 
