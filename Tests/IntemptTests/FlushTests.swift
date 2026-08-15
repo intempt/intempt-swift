@@ -37,6 +37,49 @@ final class FlushTests: IntemptTestCase {
         return sent ?? -1
     }
 
+    // MARK: - Claim / release
+
+    /// A batch must be CLAIMED before it goes on the wire, not after it comes
+    /// back. The claim is the only thing stopping a second flush — a timer tick,
+    /// a foreground transition, an explicit flush() — from reading the same rows
+    /// and sending them again.
+    ///
+    /// Mutation testing found this unguarded: flipping the claim to `false`
+    /// passed every other test in this file, because nothing observed the
+    /// database while a request was in flight.
+    func testBatchIsClaimedBeforeTheRequestIsSent() {
+        seedEvents(db, count: 3)
+        let flush = makeFlush()
+        session.deferCompletions = true
+
+        flush.flushNow { _ in }
+        waitUntil("request issued") { self.session.requestCount == 1 }
+
+        // The rows are on the wire. Nothing else may pick them up.
+        XCTAssertTrue(
+            db.read(.events, limit: 100, flag: false).isEmpty,
+            "rows in flight must be claimed, or a concurrent flush sends them twice")
+        XCTAssertEqual(
+            db.read(.events, limit: 100, flag: true).count, 3,
+            "and they must still be present, claimed, until the server acknowledges")
+
+        session.releaseDeferred()
+        waitUntil("queue drains") { self.db.count(.events) == 0 }
+    }
+
+    /// The claim must not outlive a failure. A retryable outcome releases it, or
+    /// the rows are invisible to `read(flag: false)` forever after.
+    func testClaimIsReleasedWhenTheSendFails() {
+        seedEvents(db, count: 3)
+        let flush = makeFlush(replies: [.status(503)])
+
+        _ = flushSync(flush)
+
+        XCTAssertEqual(
+            db.read(.events, limit: 100, flag: false).count, 3,
+            "a failed batch must be released, not stranded claimed")
+    }
+
     // MARK: - Happy path
 
     func testEmptyQueueSendsNothing() {
