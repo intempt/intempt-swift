@@ -67,25 +67,16 @@ enum JSONHandler {
             if CFGetTypeID(num) == CFBooleanGetTypeID() {
                 return num.boolValue
             }
+            // Covers Double and Float too: both bridge to NSNumber on every
+            // Apple platform, so this case matches before any Double/Float case
+            // could. Separate `as Double` / `as Float` branches used to sit
+            // below and were unreachable — mutation testing exposed them by
+            // surviving a mutation of code that can never run.
             if num.doubleValue.isNaN || num.doubleValue.isInfinite {
                 IntemptLogger.shared.log(.warning, "dropping non-finite number from payload")
                 return NSNull()
             }
             return num
-
-        case let d as Double:
-            guard d.isFinite else {
-                IntemptLogger.shared.log(.warning, "dropping non-finite Double from payload")
-                return NSNull()
-            }
-            return d
-
-        case let f as Float:
-            guard f.isFinite else {
-                IntemptLogger.shared.log(.warning, "dropping non-finite Float from payload")
-                return NSNull()
-            }
-            return f
 
         case is String, is Int, is UInt, is UInt64, is Bool:
             return obj
