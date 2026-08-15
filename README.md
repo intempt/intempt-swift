@@ -22,25 +22,33 @@ Analytics, personalization and consent for iOS, tvOS, macOS and watchOS.
 
 ## Install
 
-This repository is **private** while the SDK is in preview, and no version tag
-has been cut yet. Swift Package Manager cannot resolve it anonymously — your
-git credentials need read access to `intempt/intempt-swift` first. Ask your
-Intempt contact for access.
-
-Pin the branch until there is a tag to pin instead:
+### Swift Package Manager
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/intempt/intempt-swift.git", branch: "main")
+    .package(url: "https://github.com/intempt/intempt-swift.git", from: "0.1.0")
 ]
 ```
 
-In CI, where there is no keychain to authenticate from, rewrite the URL with a
-token that can read the repository:
+In Xcode: **File → Add Package Dependencies**, enter the repository URL, and
+choose **Up to Next Major Version** from `0.1.0`.
 
-```bash
-git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+### CocoaPods
+
+```ruby
+pod 'Intempt', '~> 0.1.0'
 ```
+
+This is also what a React Native or other cross-platform wrapper depends on:
+
+```ruby
+s.dependency 'Intempt', '0.1.0'
+```
+
+The version appears in three places — `Intempt.podspec`, `Intempt.sdkVersion`,
+and the `v0.1.0` git tag the podspec resolves against. `scripts/check-version-sync.sh`
+fails CI when they disagree, because a pod that ships reporting a version it is
+not only surfaces when someone debugs a support ticket against the wrong source.
 
 ## Quick start
 

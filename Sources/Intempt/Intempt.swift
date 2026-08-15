@@ -14,7 +14,10 @@ import Foundation
 /// the values a caller may need before any instance exists.
 public enum Intempt {
     /// SDK version, surfaced on every outbound request as the User-Agent.
-    public static let sdkVersion = "0.0.1"
+    /// Keep in step with `Intempt.podspec` and the git tag. CocoaPods resolves
+    /// `s.version` against a tag named `v<version>`, so the three moving apart
+    /// is how a pod ends up reporting a version it is not.
+    public static let sdkVersion = "0.1.0"
 
     /// Catalog columns requested from a recommendation feed by default.
     ///
