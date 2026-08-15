@@ -49,10 +49,10 @@ MUTANTS=(
 "Sources/Intempt/Flush.swift|db.setFlag(.events, ids: goodIds, to: true)|db.setFlag(.events, ids: goodIds, to: false)|a batch must be CLAIMED before it is sent; without the claim a concurrent flush sends the same rows twice"
 "Sources/Intempt/IntemptDB.swift|SET flag = 0 WHERE flag = 1|SET flag = 1 WHERE flag = 0|startup must RELEASE claims stranded by a crash; inverting it strands every unsent row permanently"
 "Sources/Intempt/IntemptInstance.swift|case .reject: optOut()|case .reject: break|consent(.reject) must ENFORCE, not merely record — the old SDK gated nothing (F-42)"
-"Sources/Intempt/Flush.swift|case .keepAndRetry:|case .keepAndRetry where false:|a retryable failure must release the claim; leaving rows claimed makes them invisible to every later pass"
-"Sources/Intempt/JSONHandler.swift|num.doubleValue.isNaN || num.doubleValue.isInfinite|num.doubleValue.isNaN \&\& num.doubleValue.isInfinite|NaN and infinity must BOTH be nulled; a value that cannot survive JSON must not reach the wire as the string \"nan\""
+"Sources/Intempt/Flush.swift|self.db.setFlag(.events, ids: goodIds, to: false)\n                    self.strikes.removeValue|self.db.setFlag(.events, ids: goodIds, to: true)\n                    self.strikes.removeValue|a retryable failure must RELEASE the claim; leaving rows claimed makes them invisible to every later pass"
+"Sources/Intempt/JSONHandler.swift|guard d.isFinite else|guard true else|a non-finite Double must be nulled; letting it through puts the string \"nan\" into a numeric field"
 "Sources/Intempt/Network.swift|request.setValue(credentials.basicAuthHeader, forHTTPHeaderField: \"Authorization\")|request.setValue(credentials.basicAuthHeader, forHTTPHeaderField: \"X-Authorization\")|the Basic auth header is what authenticates every request; a renamed header is a 401 on everything"
-"Sources/Intempt/IdentityManager.swift|_sessionId = \"se_\" + UUID().uuidString|_sessionId = _sessionId|logOut must rotate the SESSION as well as the profile, or the next user inherits the previous session"
+"Sources/Intempt/IdentityManager.swift|_sessionId = \"se_\" + UUID().uuidString|_sessionId = _sessionId.isEmpty ? \"se_x\" : _sessionId|logOut must rotate the SESSION as well as the profile, or the next user inherits the previous session"
 "Sources/Intempt/Flush.swift|db.read(.consents, limit: 1, flag: false)|db.read(.consents, limit: 1, flag: true)|consents drain from the unclaimed set; reading claimed rows means a withdrawal is never transmitted"
 )
 
@@ -65,6 +65,10 @@ echo
 
 for entry in "${MUTANTS[@]}"; do
     IFS='|' read -r file search replace why <<< "$entry"
+    if [ -z "${why:-}" ]; then
+        echo "  MALFORMED mutant (needs 4 pipe-separated fields): ${entry:0:60}" >&2
+        invalid=$((invalid+1)); continue
+    fi
 
     if [ ! -f "$file" ]; then
         echo "  SKIP     $file (not found)"
@@ -112,7 +116,7 @@ echo "killed $killed / $total"
 if [ "$survived" -ne 0 ] || [ "$invalid" -ne 0 ]; then
     echo
     echo "SURVIVING MUTANTS — the suite did not notice these defects:"
-    for s in "${SURVIVORS[@]}"; do
+    for s in ${SURVIVORS[@]+"${SURVIVORS[@]}"}; do
         echo "  - $s"
     done
     exit 1
