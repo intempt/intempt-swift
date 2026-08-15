@@ -13,13 +13,18 @@ live here because the Swift SDK's shape is canonical, decided 2026-08-15.
 | Swift | `intempt-swift` | canonical — this document describes it |
 | Android | `intempt-android` | in progress, 3.0 clean break |
 | React Native | `intempt-reactnative` | in progress, bridges both |
+| Node | `intempt-node` | client surface only; see Server SDKs |
+| Python | `intempt-python` | client surface only; see Server SDKs |
+| PHP | `intempt-php` | client surface only; see Server SDKs |
 | JavaScript | `intemptjs` | out of scope, predates the contract |
-| Node | `intempt-node` | out of scope, server surface differs |
 
-Node and JavaScript are deliberately excluded. A server SDK has no session, no app
-lifecycle and no autocapture, and forcing it into this shape would be worse for its
-users. Divergences that are *gratuitous* rather than structural should still be
-reported here as accepted, so nobody re-litigates them.
+Server SDKs conform on the shared capture surface — `track`, `identify`, `group`,
+`alias`, `consent`, `optIn` / `optOut` — and diverge structurally everywhere a server has
+no device, session or per-user state. Those divergences are enumerated under
+[Server SDKs](#server-sdks) so nobody "fixes" them into conformance.
+
+A divergence that is *gratuitous* rather than structural is a bug, and belongs in an
+issue rather than in the table.
 
 ## Why the Swift shape
 
@@ -175,6 +180,50 @@ Runtime-settable, not config-file-only. Defaults: `sessions` on, the other two o
 SDK that silently emits events the integrator never asked for is how an event-volume bill
 surprises someone.
 
+| Option | Default | Emits |
+|---|---|---|
+| `sessions` | on | Session start / end, carrying device facts as user attributes |
+| `versionChanges` | off | Application Installed / Application Updated, once per version |
+| `appStateChanges` | off | Application Opened / Application Backgrounded, every transition |
+
+## Autocapture
+
+Distinct from automatic events, and repeatedly confused with them. Automatic events are
+lifecycle facts the SDK knows without instrumentation. **Autocapture is UI instrumentation
+— it hooks the view layer.**
+
+```
+autocapture.configure({ screenViews, controlInteractions })
+autocapture.start()
+autocapture.stop()
+autocapture.isRunning -> Bool
+```
+
+Three rules, all contractual:
+
+1. **Opt-in, and inert until started.** `configure()` sets options; nothing is installed
+   until `start()`. On Apple this swizzles UIKit, which is not something an SDK may do
+   because it was merely initialised.
+2. **One interaction, one event.** A control press already emits its own event. Counting
+   it again as a generic touch double-counts every button in the app. Any platform
+   mapping must preserve this.
+3. **Platform granularity is an annex, not the contract.** The contract names concepts
+   both platforms have — screen views and control interactions. Finer options stay
+   platform-specific and are listed below rather than forced onto a platform that has no
+   equivalent distinction.
+
+### Platform annex
+
+| Platform | Options | Notes |
+|---|---|---|
+| Swift | `screens`, `taps`, `controlChanges`, `screenExits`, `rawTouches` | UIKit-shaped. `taps` and `rawTouches` are deliberately separate — see rule 2 |
+| Android | `isTouchEnabled`, `isTextCaptureEnabled`, `isAutoCaptureEnabled` | Read from the config asset today; must become runtime-settable |
+| React Native | maps to `screenViews`, `controlInteractions` only | `rawTouches` has no cross-platform meaning |
+
+Android's autocapture options being config-file-only is a conformance gap, the same one
+credentials have. A React Native app enabling screen tracking from JavaScript and getting
+it on exactly one platform is the divergence this contract exists to catch.
+
 ## Errors
 
 One error type across platforms, with these cases:
@@ -237,8 +286,51 @@ Two rules for the corpus, both learned the hard way:
 |---|---|---|
 | Android | `doNotCaptureText(View)` | Native view type, no cross-platform meaning |
 | Android | `assets/intempt-config.json` | Retained as a fallback, not the only path |
-| Node | Entire surface | Server SDK, no session or lifecycle |
+| Swift | `rawTouches` autocapture option | UIKit-specific; no Android equivalent |
+| React Native | No `doNotCaptureText` | Takes a native `View`; cannot cross the bridge |
 | JavaScript | Entire surface | Predates the contract |
+
+### Server SDKs
+
+Node, Python and PHP are server SDKs. The divergences below are **structural** — they
+follow from having no device, no session and no per-user state — and are recorded here so
+nobody "fixes" them into conformance.
+
+| Divergence | Why it is correct |
+|---|---|
+| `reset()` absent | One client instance is shared across every request and thread; each call carries its own identifier. There is nothing to reset. A no-op `reset()` would imply per-user state that does not exist |
+| `getProfileId()` absent | `profileId` is device-minted. A server inventing one creates an orphan profile |
+| `getSessionId()` absent | No session on a server |
+| `masterId` absent | Assigned after identity resolution, with no server read path |
+| `record()` absent (Node) | Present only on the deprecated 1.x shim |
+| `consent.grant()` / `consent.revoke()` | Grant and revoke are genuinely different writes. The collapsed `consent(action:)` shape is what 1.x moved away from |
+| `trackBatch`, `close`, `buffered`, `setConfig` | Server concerns — connection lifetime and batching — with no client analogue |
+
+`optIn()` / `optOut()` are shared. Node additionally exposes `isOptedIn()`, which is the
+inverse getter this contract calls `isUserOptIn()`; the names should converge, and that is
+a real divergence rather than a structural one.
+
+## Licensing
+
+**Not uniform, and not safe to assume.** Each SDK's licence follows what it derives from.
+
+| SDK | Licence | Because |
+|---|---|---|
+| `intempt-swift` | Apache 2.0 | vendors mixpanel-swift (Apache 2.0) |
+| `intempt-android` | Apache 2.0 | vendors a Mixpanel substrate (Apache 2.0) |
+| `intempt-reactnative` | Apache 2.0 | structure adapted from mixpanel-react-native (Apache 2.0) |
+| `intempt-node` | **MIT** | mixpanel-node is MIT, so it could stay MIT |
+| `intempt-python` | Apache 2.0 | derives from mixpanel-python (Apache 2.0) |
+| `intempt-php` | Apache 2.0 | derives from mixpanel-php (Apache 2.0) |
+
+MIT is one-way compatible into Apache 2.0, never the reverse. Before any SDK borrows code
+from another, check both licences — copying Apache-licensed code into the MIT Node SDK is
+a licence violation, and the reverse is fine.
+
+One inherited attribution to carry if anything ever derives from it:
+`mixpanel-php/lib/ConsumerStrategies/SocketConsumer.php` carries an **MIT © 2013
+Segment.io** notice inside an otherwise Apache 2.0 repository. That attribution travels
+with the file.
 
 ## Changing this document
 
