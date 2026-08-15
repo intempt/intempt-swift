@@ -161,18 +161,15 @@ final class IntemptDemoUITests: XCTestCase {
             "the anonymous identity must rotate so the next user cannot inherit it")
     }
 
-    // MARK: - Personalization
+    // MARK: - Recommendations
 
-    func testExperimentsAndProductsReturn() throws {
+    func testProductsReturn() throws {
         try requireInitialized()
 
-        tap("experiments-button")
-        XCTAssertTrue(
-            logContains("experiments", timeout: 30),
-            "choose-api must answer, even if with zero choices")
-
         tap("products-button")
-        XCTAssertTrue(logContains("products", timeout: 30))
+        XCTAssertTrue(
+            logContains("products", timeout: 30),
+            "the feed must answer — an empty list is a result, no answer is not")
     }
 
     // MARK: - Autocapture

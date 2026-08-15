@@ -120,25 +120,10 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Personalization
+    // MARK: - Recommendations
 
     private var personalizationSection: some View {
-        Section("Personalization") {
-            Button("Fetch experiments") {
-                intempt?.experiments { result in
-                    switch result {
-                    case .success(let choices):
-                        DemoLog.append("experiments → \(choices.count) choice(s)")
-                        for choice in choices {
-                            DemoLog.append("  \(choice.experience) → variant \(choice.variant)")
-                        }
-                    case .failure(let error):
-                        DemoLog.append("experiments failed → \(error)")
-                    }
-                }
-            }
-            .accessibilityIdentifier("experiments-button")
-
+        Section("Recommendations") {
             Button("Fetch recommendations") {
                 // `fields` defaults to a compact set on purpose: an unfielded
                 // request returns raw ML embedding vectors, 443x the bytes.
