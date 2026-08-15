@@ -24,37 +24,6 @@
 //
 import Foundation
 
-// MARK: - Experiments
-
-/// One active experiment or personalization assignment.
-public struct ExperimentChoice: Equatable, Sendable {
-    /// Experience id the assignment belongs to.
-    public let experience: String
-    /// Assigned variant id. This is what a caller branches on.
-    public let variant: String
-    /// Server-side target the experience was configured against.
-    public let target: String?
-    /// The experiment or experience NAME, when the server returns one.
-    ///
-    /// Present when the request asked for specific `names`. A `choose-web`
-    /// response carries no name — only ids — so this is nil there. The
-    /// deprecated Objective-C SDK's consumers matched on this field, so it is
-    /// surfaced rather than discarded.
-    public let name: String?
-    /// Variant payload the server attached, when present. Untyped for the same
-    /// reason as `changes`: the shape is authored server-side.
-    public let body: JSONValue?
-    /// Change descriptors. Native has no DOM to mutate, so these are passed
-    /// through rather than applied — a caller reads them to drive its own UI.
-    ///
-    /// `JSONValue` rather than `[String: Any]`: the shape is owned by the web
-    /// editor and modelling it as a struct would go stale silently, but `Any`
-    /// cannot be `Sendable`, so this type could not cross a concurrency
-    /// boundary and would be a hard error under the Swift 6 language mode.
-    public let changes: [JSONValue]
-    public let updatedAt: Date?
-}
-
 // MARK: - Products
 
 /// One recommended product. Attributes are whatever `fields` asked for, so the
@@ -103,64 +72,6 @@ final class Personalization {
         self.projectId = projectId
         self.sourceId = sourceId
     }
-
-    // MARK: Experiments
-
-    func experiments(
-        profileId: String,
-        sessionId: String,
-        names: [String]? = nil,
-        groups: [String]? = nil,
-        optimizationType: OptimizationType? = nil,
-        productId: String? = nil,
-        completion: @escaping (Result<[ExperimentChoice], IntemptError>) -> Void
-    ) {
-        var body: [String: Any] = [
-            "identification": [
-                "sourceId": sourceId,
-                "profileId": profileId,
-            ],
-            "sessionId": sessionId,
-            "device": Self.deviceClass,
-        ]
-        if let productId { body["productId"] = productId }
-        // Verified accepted by production (200). intemptjs does not send these —
-        // it asks for everything matching the current URL — but the deprecated
-        // Objective-C SDK did, via chooseExperimentsByNames /
-        // choosePersonalizationsByNames, and apps built on it select by name.
-        // Omitted entirely when nil so the intemptjs behaviour stays the default.
-        if let names, !names.isEmpty { body["names"] = names }
-        if let groups, !groups.isEmpty { body["groups"] = groups }
-        if let optimizationType { body["optimizationType"] = optimizationType.rawValue }
-
-        send(endpoint: .chooseApi(org: orgId, project: projectId), body: body) { result in
-            completion(result.map(Self.parseChoices))
-        }
-    }
-
-    static func parseChoices(_ json: [String: Any]) -> [ExperimentChoice] {
-        guard let raw = json["choices"] as? [[String: Any]] else { return [] }
-        return raw.compactMap { item in
-            // A choice with no variant carries no assignment, so it cannot be
-            // branched on. Dropping it beats handing back a half-built value.
-            guard let variant = Self.string(item["variant"]),
-                let experience = Self.string(item["experience"])
-            else { return nil }
-            return ExperimentChoice(
-                experience: experience,
-                variant: variant,
-                target: Self.string(item["target"]),
-                name: Self.string(item["name"]),
-                body: item["body"].map(JSONValue.from),
-                changes: (item["changes"] as? [Any])?.map(JSONValue.from) ?? [],
-                updatedAt: (item["updatedAt"] as? NSNumber).map {
-                    // Server sends epoch milliseconds.
-                    Date(timeIntervalSince1970: $0.doubleValue / 1000)
-                })
-        }
-    }
-
-    // MARK: Products
 
     func products(
         feedId: String,

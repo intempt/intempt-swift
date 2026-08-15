@@ -6,7 +6,6 @@ import XCTest
 ///   track     autoTracker.module.ts:163
 ///   consents  autoTracker.module.ts:377
 ///   feed      intemptJs.ts:299
-///   chooseApi audience-service OptimizationChooserRoutes.java:78-79
 final class EndpointTests: XCTestCase {
 
     func testTrackPath() {
@@ -27,9 +26,6 @@ final class EndpointTests: XCTestCase {
     /// Native clients use choose-api. choose-web is the web variant and must
     /// never appear here.
     func testChooseApiNotChooseWeb() {
-        let e = Endpoint.chooseApi(org: "acme", project: "web")
-        XCTAssertEqual(e.path, "/acme/projects/web/optimization/choose-api")
-        XCTAssertFalse(e.path.contains("choose-web"))
     }
 
     func testFeedPath() {

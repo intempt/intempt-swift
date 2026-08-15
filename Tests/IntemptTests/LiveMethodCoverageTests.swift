@@ -157,42 +157,6 @@ final class LiveMethodCoverageTests: IntemptTestCase {
 
         // MARK: Personalization — real requests
 
-        var experimentsOK = false
-        var experimentsDetail = ""
-        let e1 = expectation(description: "experiments")
-        intempt.experiments { result in
-            switch result {
-            case .success(let choices):
-                experimentsOK = true
-                experimentsDetail = "\(choices.count) choice(s)"
-            case .failure(let error):
-                experimentsDetail = "\(error)"
-            }
-            e1.fulfill()
-        }
-        wait(for: [e1], timeout: 45)
-        check("experiments", experimentsDetail, experimentsOK)
-
-        // Named form, which is what both demo apps use.
-        var namedOK = false
-        var namedDetail = ""
-        let e2 = expectation(description: "named experiments")
-        intempt.experiments(
-            names: ["advertisement", "trial_offer_v2", "discount_popup_v2"],
-            optimizationType: .personalization
-        ) { result in
-            switch result {
-            case .success(let choices):
-                namedOK = true
-                namedDetail = "\(choices.count) choice(s)"
-            case .failure(let error):
-                namedDetail = "\(error)"
-            }
-            e2.fulfill()
-        }
-        wait(for: [e2], timeout: 45)
-        check("experiments(names:)", namedDetail, namedOK)
-
         var productsOK = false
         var productsDetail = ""
         let e3 = expectation(description: "products")

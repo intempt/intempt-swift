@@ -58,7 +58,6 @@ enum Endpoint {
     /// Experiments and personalizations, distinguished by an
     /// `optimizationType` discriminator. Native uses choose-api;
     /// intemptjs uses choose-web because it is web.
-    case chooseApi(org: String, project: String)
     /// Product recommendation feeds.
     case feed(org: String, project: String, feedId: String)
 
@@ -68,8 +67,6 @@ enum Endpoint {
             return "/\(org)/projects/\(project)/sources/\(sourceId)/track"
         case .consents(let org, let project):
             return "/\(org)/projects/\(project)/consents/data"
-        case .chooseApi(let org, let project):
-            return "/\(org)/projects/\(project)/optimization/choose-api"
         case .feed(let org, let project, let feedId):
             return "/\(org)/projects/\(project)/feeds/\(feedId)/data"
         }

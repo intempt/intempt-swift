@@ -398,34 +398,6 @@ public final class IntemptInstance {
 
     // MARK: - Personalization
 
-    /// Active experiment and personalization assignments for this profile.
-    ///
-    /// Not queued and not retried: an assignment is only useful while the user
-    /// is looking at the screen, so one delivered minutes late is worse than
-    /// none. Callers get a `Result` and decide.
-    /// - Parameters:
-    ///   - names: specific experiment or experience names to evaluate. Omit to
-    ///     ask for everything that matches, which is what the JS SDK does.
-    ///   - groups: experiment groups, the `byGroups` variant of the same idea.
-    ///   - optimizationType: `.experiment` or `.personalization`. The old
-    ///     Objective-C SDK split these into two methods against one endpoint.
-    public func experiments(
-        names: [String]? = nil,
-        groups: [String]? = nil,
-        optimizationType: OptimizationType? = nil,
-        productId: String? = nil,
-        completion: @escaping (Result<[ExperimentChoice], IntemptError>) -> Void
-    ) {
-        personalization.experiments(
-            profileId: identity.profileId,
-            sessionId: identity.sessionId,
-            names: names,
-            groups: groups,
-            optimizationType: optimizationType,
-            productId: productId,
-            completion: completion)
-    }
-
     /// Recommended products from a configured feed.
     ///
     /// - Parameter fields: catalog columns to return. Defaults to a compact

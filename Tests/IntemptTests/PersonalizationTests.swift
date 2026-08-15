@@ -39,129 +39,18 @@ final class PersonalizationTests: IntemptTestCase {
 
     // MARK: - Experiments: request shape
 
-    /// The live endpoint returns 400 "Identification is required" without this
-    /// wrapper. An earlier draft of our plan sent a flat body plus an
-    /// `optimizationType` discriminator; neither exists in the contract.
-    func testExperimentsBodyNestsIdentification() {
-        let client = makeClient(replies: [.json(200, Self.liveChoices)])
-        let done = expectation(description: "experiments")
-        client.experiments(profileId: "pr_1", sessionId: "se_1") { _ in done.fulfill() }
-        wait(for: [done], timeout: 2)
 
-        let body = session.bodies[0]
-        let ident = body["identification"] as? [String: Any]
-        XCTAssertNotNil(ident, "identification must be a nested object, not flat keys")
-        XCTAssertEqual(ident?["profileId"] as? String, "pr_1")
-        XCTAssertEqual(ident?["sourceId"] as? String, "42")
-        XCTAssertNil(body["profileId"], "profileId must NOT also appear at the top level")
-        XCTAssertNil(body["optimizationType"], "no such field in the contract")
-        XCTAssertNil(body["names"], "no such field in the contract")
-    }
 
-    func testExperimentsGoesToChooseApiNotChooseWeb() {
-        let client = makeClient()
-        let done = expectation(description: "experiments")
-        client.experiments(profileId: "pr_1", sessionId: "se_1") { _ in done.fulfill() }
-        wait(for: [done], timeout: 2)
 
-        let url = session.requests[0].url!.absoluteString
-        XCTAssertEqual(url, "https://api.intempt.com/v1/acme/projects/web/optimization/choose-api")
-        XCTAssertFalse(url.contains("choose-web"), "choose-web is the browser endpoint")
-    }
-
-    func testExperimentsOmitsProductIdWhenAbsent() {
-        let client = makeClient()
-        let done = expectation(description: "experiments")
-        client.experiments(profileId: "pr_1", sessionId: "se_1") { _ in done.fulfill() }
-        wait(for: [done], timeout: 2)
-        XCTAssertNil(session.bodies[0]["productId"], "absent, not null")
-    }
-
-    func testExperimentsIncludesProductIdWhenGiven() {
-        let client = makeClient()
-        let done = expectation(description: "experiments")
-        client.experiments(profileId: "pr_1", sessionId: "se_1", productId: "sku_9") { _ in
-            done.fulfill()
-        }
-        wait(for: [done], timeout: 2)
-        XCTAssertEqual(session.bodies[0]["productId"] as? String, "sku_9")
-    }
 
     // MARK: - Experiments: response parsing
 
-    func testParsesLiveChoicesResponse() {
-        let json = JSONHandler.deserializeData(Data(Self.liveChoices.utf8)) as! [String: Any]
-        let choices = Personalization.parseChoices(json)
 
-        XCTAssertEqual(choices.count, 2)
-        XCTAssertEqual(choices[0].variant, "8458")
-        XCTAssertEqual(choices[0].experience, "8038")
-        XCTAssertEqual(choices[0].target, "https://shoplinea.intempt.com/")
-        XCTAssertEqual(choices[1].variant, "8461")
-    }
 
-    /// The server sends epoch MILLISECONDS. Treating it as seconds dates the
-    /// assignment to 1970 and any staleness check silently passes.
-    func testUpdatedAtIsParsedAsMilliseconds() {
-        let json = JSONHandler.deserializeData(Data(Self.liveChoices.utf8)) as! [String: Any]
-        let choice = Personalization.parseChoices(json)[0]
 
-        XCTAssertEqual(
-            choice.updatedAt?.timeIntervalSince1970 ?? 0, 1_780_479_018.724, accuracy: 0.01)
-        let year = Calendar(identifier: .gregorian)
-            .component(.year, from: choice.updatedAt ?? .distantPast)
-        XCTAssertEqual(year, 2026, "ms read as seconds would land in 1970")
-    }
 
-    /// The editor's change descriptors survive as structured, Sendable values.
-    func testChangeDescriptorsAreDecodedNotDiscarded() {
-        let body = """
-            {"choices":[{"variant":"1","experience":"2","changes":[
-              {"selector":"#hero","action":"setText","value":"Hi","weight":0.5,"live":true,"alt":null}
-            ]}]}
-            """
-        let json = JSONHandler.deserializeData(Data(body.utf8)) as! [String: Any]
-        let change = Personalization.parseChoices(json)[0].changes[0]
 
-        XCTAssertEqual(change["selector"]?.stringValue, "#hero")
-        XCTAssertEqual(change["action"]?.stringValue, "setText")
-        XCTAssertEqual(change["weight"]?.doubleValue, 0.5)
-        // CFBoolean bridges to NSNumber; a naive cast turns true into 1.
-        XCTAssertEqual(change["live"], .bool(true))
-        XCTAssertNotEqual(change["live"], .number(1))
-        XCTAssertEqual(change["alt"], .null)
-    }
 
-    func testEmptyChoicesIsNotAnError() {
-        let json = JSONHandler.deserializeData(Data("{\"choices\":[]}".utf8)) as! [String: Any]
-        XCTAssertEqual(Personalization.parseChoices(json).count, 0)
-    }
-
-    func testMissingChoicesKeyYieldsEmpty() {
-        XCTAssertEqual(Personalization.parseChoices([:]).count, 0)
-    }
-
-    /// A choice with no variant carries no assignment. Returning it would hand
-    /// the caller a value there is nothing to branch on.
-    func testChoiceWithoutVariantIsDropped() {
-        let body = """
-            {"choices":[{"experience":"1","target":"x"},{"variant":"9","experience":"2"}]}
-            """
-        let json = JSONHandler.deserializeData(Data(body.utf8)) as! [String: Any]
-        let choices = Personalization.parseChoices(json)
-        XCTAssertEqual(choices.count, 1)
-        XCTAssertEqual(choices[0].variant, "9")
-    }
-
-    /// The server has sent variant ids as both strings and bare numbers.
-    func testNumericVariantIdIsAccepted() {
-        let body = #"{"choices":[{"variant":8458,"experience":8038}]}"#
-        let json = JSONHandler.deserializeData(Data(body.utf8)) as! [String: Any]
-        let choices = Personalization.parseChoices(json)
-        XCTAssertEqual(choices.count, 1)
-        XCTAssertEqual(choices[0].variant, "8458", "must not render as 8458.0")
-        XCTAssertEqual(choices[0].experience, "8038")
-    }
 
     // MARK: - Products: the 443x defect
 
@@ -333,9 +222,9 @@ final class PersonalizationTests: IntemptTestCase {
 
     func testIdentificationRequiredMessageIsSurfaced() {
         let client = makeClient(replies: [.serverError(400, "Identification is required")])
-        var result: Result<[ExperimentChoice], IntemptError>?
-        let done = expectation(description: "experiments")
-        client.experiments(profileId: "", sessionId: "se_1") {
+        var result: Result<[ProductRecommendation], IntemptError>?
+        let done = expectation(description: "products")
+        client.products(feedId: "9", profileId: "", count: 5, fields: ["id"]) {
             result = $0
             done.fulfill()
         }
@@ -349,9 +238,9 @@ final class PersonalizationTests: IntemptTestCase {
     /// success — the caller needs to know personalization is misconfigured.
     func testTerminalWithoutBodyFallsBackToStatus() {
         let client = makeClient(replies: [.status(401)])
-        var result: Result<[ExperimentChoice], IntemptError>?
-        let done = expectation(description: "experiments")
-        client.experiments(profileId: "pr_1", sessionId: "se_1") {
+        var result: Result<[ProductRecommendation], IntemptError>?
+        let done = expectation(description: "products")
+        client.products(feedId: "9", profileId: "pr_1", count: 5, fields: ["id"]) {
             result = $0
             done.fulfill()
         }
@@ -363,9 +252,9 @@ final class PersonalizationTests: IntemptTestCase {
 
     func testRetryableIsReportedAsRetryable() {
         let client = makeClient(replies: [.status(503, headers: ["Retry-After": "12"])])
-        var result: Result<[ExperimentChoice], IntemptError>?
-        let done = expectation(description: "experiments")
-        client.experiments(profileId: "pr_1", sessionId: "se_1") {
+        var result: Result<[ProductRecommendation], IntemptError>?
+        let done = expectation(description: "products")
+        client.products(feedId: "9", profileId: "pr_1", count: 5, fields: ["id"]) {
             result = $0
             done.fulfill()
         }
@@ -377,9 +266,9 @@ final class PersonalizationTests: IntemptTestCase {
 
     func testTransportFailureIsReported() {
         let client = makeClient(replies: [.offline()])
-        var result: Result<[ExperimentChoice], IntemptError>?
-        let done = expectation(description: "experiments")
-        client.experiments(profileId: "pr_1", sessionId: "se_1") {
+        var result: Result<[ProductRecommendation], IntemptError>?
+        let done = expectation(description: "products")
+        client.products(feedId: "9", profileId: "pr_1", count: 5, fields: ["id"]) {
             result = $0
             done.fulfill()
         }
@@ -393,9 +282,9 @@ final class PersonalizationTests: IntemptTestCase {
     /// caller can act on either. Empty success, not a fabricated error.
     func testSuccessWithUnparseableBodyYieldsEmpty() {
         let client = makeClient(replies: [.json(200, "not json at all")])
-        var result: Result<[ExperimentChoice], IntemptError>?
-        let done = expectation(description: "experiments")
-        client.experiments(profileId: "pr_1", sessionId: "se_1") {
+        var result: Result<[ProductRecommendation], IntemptError>?
+        let done = expectation(description: "products")
+        client.products(feedId: "9", profileId: "pr_1", count: 5, fields: ["id"]) {
             result = $0
             done.fulfill()
         }
@@ -429,111 +318,27 @@ final class PersonalizationTests: IntemptTestCase {
     }
 }
 
-// MARK: - Named experiments (Objective-C SDK parity)
-
-/// The deprecated Objective-C SDK selected experiments by name
-/// (`chooseExperimentsByNames`, `choosePersonalizationsByNames`), and apps built
-/// on it match results on a `name` field. intemptjs does neither — it asks for
-/// everything matching the current URL — so an earlier version of this SDK
-/// dropped both, which would have made those apps unmigratable.
-///
-/// Verified against production that the endpoint accepts `names`, `groups` and
-/// `optimizationType` (200 for each).
-extension PersonalizationTests {
-
-    func testNamesAreSentWhenGiven() {
-        let client = makeClient()
-        let done = expectation(description: "experiments")
-        client.experiments(
-            profileId: "pr_1", sessionId: "se_1",
-            names: ["advertisement", "trial_offer_v2"],
-            optimizationType: .experiment
-        ) { _ in done.fulfill() }
-        wait(for: [done], timeout: 2)
-
-        let body = session.bodies[0]
-        XCTAssertEqual(body["names"] as? [String], ["advertisement", "trial_offer_v2"])
-        XCTAssertEqual(body["optimizationType"] as? String, "experiment")
-    }
-
-    /// Omitted entirely when absent, so the intemptjs behaviour stays default.
-    func testNamesAreOmittedWhenNotGiven() {
-        let client = makeClient()
-        let done = expectation(description: "experiments")
-        client.experiments(profileId: "pr_1", sessionId: "se_1") { _ in done.fulfill() }
-        wait(for: [done], timeout: 2)
-
-        XCTAssertNil(session.bodies[0]["names"], "absent, not an empty array")
-        XCTAssertNil(session.bodies[0]["groups"])
-        XCTAssertNil(session.bodies[0]["optimizationType"])
-    }
-
-    /// An empty array would read as "match nothing" rather than "match all".
-    func testEmptyNamesIsTreatedAsAbsent() {
-        let client = makeClient()
-        let done = expectation(description: "experiments")
-        client.experiments(profileId: "pr_1", sessionId: "se_1", names: []) { _ in done.fulfill() }
-        wait(for: [done], timeout: 2)
-        XCTAssertNil(session.bodies[0]["names"])
-    }
-
-    func testGroupsVariant() {
-        let client = makeClient()
-        let done = expectation(description: "experiments")
-        client.experiments(
-            profileId: "pr_1", sessionId: "se_1", groups: ["default"],
-            optimizationType: .personalization
-        ) { _ in done.fulfill() }
-        wait(for: [done], timeout: 2)
-
-        XCTAssertEqual(session.bodies[0]["groups"] as? [String], ["default"])
-        XCTAssertEqual(session.bodies[0]["optimizationType"] as? String, "personalization")
-    }
-
-    /// A named response carries `name` and `body`; the old SDK's consumers read
-    /// both. Dropping them left those apps nothing to match on.
-    func testNameAndBodyAreParsedWhenPresent() {
-        let response = """
-            {"choices":[{"variant":"1","experience":"2","name":"advertisement",
-              "body":{"headline":"Go premium","showAd":true,"weight":0.4}}]}
-            """
-        let json = JSONHandler.deserializeData(Data(response.utf8)) as! [String: Any]
-        let choice = Personalization.parseChoices(json)[0]
-
-        XCTAssertEqual(choice.name, "advertisement")
-        XCTAssertEqual(choice.body?["headline"]?.stringValue, "Go premium")
-        XCTAssertEqual(choice.body?["showAd"], .bool(true))
-        XCTAssertEqual(choice.body?["weight"]?.doubleValue, 0.4)
-    }
-
-    /// choose-web returns ids only, so both must be nil rather than fabricated.
-    func testNameAndBodyAreNilWhenAbsent() {
-        let json = JSONHandler.deserializeData(Data(Self.liveChoices.utf8)) as! [String: Any]
-        let choice = Personalization.parseChoices(json)[0]
-        XCTAssertNil(choice.name)
-        XCTAssertNil(choice.body)
-    }
-}
-
 // MARK: - Untyped bridge for migrating off the Objective-C SDK
 
 extension PersonalizationTests {
 
-    /// The old SDK handed `[String: Any]` to its consumers. Those consumers
-    /// still exist, so a variant body has to be convertible without rewriting
-    /// them — including nested values and correct booleans.
+    /// `JSONValue` is how an untyped server value crosses into Swift, and
+    /// consumers convert it straight back to `[String: Any]`. Nested values and
+    /// booleans are the two that break: a bool arriving as 1 changes a branch.
+    ///
+    /// Previously exercised through the experiment-choice parser; that parser is
+    /// gone, so this goes at `JSONValue` directly rather than losing the case.
     func testBodyConvertsToAnUntypedDictionary() {
         let response = """
-            {"choices":[{"variant":"1","experience":"2","name":"adon",
-              "body":{"type":"number","count":3,"live":true,"nested":{"a":1},"tags":["x","y"]}}]}
+            {"type":"number","count":3,"live":true,"nested":{"a":1},"tags":["x","y"]}
             """
         let json = JSONHandler.deserializeData(Data(response.utf8)) as! [String: Any]
-        let dict = Personalization.parseChoices(json)[0].body?.dictionaryValue
+        let dict = JSONValue.from(json).dictionaryValue
 
         XCTAssertNotNil(dict)
         XCTAssertEqual(dict?["type"] as? String, "number")
         XCTAssertEqual(dict?["count"] as? Double, 3)
-        // A bool must survive as a bool, not as 1 — the old code branches on it.
+        // A bool must survive as a bool, not as 1 — consumers branch on it.
         XCTAssertEqual(dict?["live"] as? Bool, true)
         XCTAssertEqual((dict?["nested"] as? [String: Any])?["a"] as? Double, 1)
         XCTAssertEqual(dict?["tags"] as? [String], ["x", "y"])

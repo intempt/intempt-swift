@@ -236,27 +236,6 @@ final class LiveContractTests: IntemptTestCase {
 
     // MARK: - Personalization
 
-    func testExperimentsReturnsSuccessFromChooseApi() throws {
-        let credentials = try requireCredentials()
-        let instance = try makeInstance(credentials)
-
-        var result: Result<[ExperimentChoice], IntemptError>?
-        let done = expectation(description: "experiments")
-        instance.experiments {
-            result = $0
-            done.fulfill()
-        }
-        wait(for: [done], timeout: 30)
-
-        switch result {
-        case .success:
-            break  // an empty list is a valid answer; a 400 is not
-        case .failure(let error):
-            XCTFail("choose-api rejected the request shape: \(error)")
-        case .none:
-            XCTFail("no result")
-        }
-    }
 
     /// The 443x defect, proven live: the same request with and without `fields`
     /// differs by two orders of magnitude because the unfielded response

@@ -106,27 +106,27 @@ intempt.productAdd(productId: String, quantity: Int)
 intempt.productOrdered(products: [(productId: String, quantity: Int)])
 ```
 
-### Personalization
+### Recommendations
 
 ```swift
-intempt.experiments(names: ["checkout-button"]) { result in
-    // Result<[ExperimentChoice], IntemptError>
-    // ExperimentChoice: .experience, .variant, .target
-    if case .success(let choices) = result {
-        for choice in choices where choice.experience == "checkout-button" {
-            apply(choice.variant)
-        }
-    }
-}
-
 intempt.products(feedId: "feed-id", count: 10) { result in
     // Result<[ProductRecommendation], IntemptError>
+    if case .success(let products) = result {
+        render(products)          // .productId, .title, .imageURL, .price
+    }
 }
 ```
 
-`experiments` also takes `groups:`, `optimizationType:` (`.experiment` or
-`.personalization`) and `productId:`. All are optional; omitting every filter
-asks for everything that matches.
+Feeds take different inputs. A profile-input feed keys off the current profile
+and needs no `productId`; a product-input feed returns an empty list until you
+pass one. Both answer `200`, so asking the wrong kind looks like a profile with
+no recommendations rather than a mistake.
+
+> **No experiments.** Experiment and personalization assignment is not part of
+> this SDK. There is no server-side support for it on mobile today: the endpoint
+> answers `200` with an empty set because there is nothing to configure behind
+> it. Recommendation feeds are a different capability against a different
+> endpoint and are unaffected.
 
 `products` defaults `fields:` to `Intempt.defaultFeedFields` deliberately. An
 unfielded request returns every catalog column including raw ML embedding
