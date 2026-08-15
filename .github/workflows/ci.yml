@@ -95,6 +95,27 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             | xcbeautify --quiet
 
+  mutation:
+    name: mutation tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Coverage says a line executed; it does not say an assertion would have
+      # noticed the line being wrong. Each mutant is a defect this SDK could
+      # plausibly ship, and the suite has to go red for every one.
+      #
+      # This caught a real gap on its first run: the Edit Field / Action choice
+      # lived inside `#if canImport(UIKit)`, which `swift test` on macOS excludes
+      # entirely, so swapping the two names passed every test.
+      - name: Plant defects and require the suite to catch them
+        env:
+          INTEMPT_API_KEY: ${{ secrets.INTEMPT_API_KEY }}
+          INTEMPT_ORG_ID: ${{ secrets.INTEMPT_ORG_ID }}
+          INTEMPT_PROJECT_ID: ${{ secrets.INTEMPT_PROJECT_ID }}
+          INTEMPT_SOURCE_ID: ${{ secrets.INTEMPT_SOURCE_ID }}
+        run: ./scripts/mutation-test.sh
+
   lint:
     name: format + secrets
     runs-on: macos-15
@@ -187,7 +208,7 @@ jobs:
   all-green:
     name: all-green
     runs-on: ubuntu-latest
-    needs: [test, compile-matrix, demo, lint, license, podspec]
+    needs: [test, compile-matrix, demo, lint, license, podspec, mutation]
     if: always()
     steps:
       # Branch protection points at this single job, so adding a job above

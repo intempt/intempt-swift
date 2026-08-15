@@ -336,7 +336,7 @@ public final class Autocapture {
             else { return handled }
 
             capture.interaction(
-                name: isValueChange ? EventNames.editField : EventNames.action,
+                name: EventNames.controlInteraction(isValueChange: isValueChange),
                 properties: Autocapture.properties(for: control))
             return handled
         }
