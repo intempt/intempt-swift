@@ -91,6 +91,21 @@ enum EventNames {
 
     /// No collection provisioned for these; they are emitted only when the
     /// integrator opts in to `appStateChanges`.
+    /// Which event a `UIControl` interaction reports.
+    ///
+    /// Platform-independent on purpose. The call site is inside
+    /// `#if canImport(UIKit)`, which `swift test` on macOS excludes entirely —
+    /// so a swap of these two names was invisible to every test, and mutation
+    /// testing caught exactly that. The decision lives here where it can be
+    /// asserted; the UIKit code only supplies the boolean.
+    ///
+    /// A value change is an *Edit Field*: a switch, slider, stepper, date picker,
+    /// segmented control or text field changing what it holds. Anything else a
+    /// control fires is an *Action* — a button press.
+    static func controlInteraction(isValueChange: Bool) -> String {
+        isValueChange ? editField : action
+    }
+
     static let applicationOpened = "Application Opened"
     static let applicationBackgrounded = "Application Backgrounded"
 

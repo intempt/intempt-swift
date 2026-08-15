@@ -17,6 +17,21 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 QUICK="${1:-}"
 
+# REFUSES to run with a dirty working tree.
+#
+# restore() is `git checkout -- <file>`, which discards uncommitted changes to
+# that file. Running this over unstaged work silently destroys it — which it did
+# to me: an extraction sitting uncommitted in EventNames.swift was reverted
+# mid-run, and the commit that followed carried the call site without the
+# function. Committed work is recoverable; unstaged work is not.
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "working tree is dirty — commit or stash first." >&2
+    echo "this script restores mutated files with 'git checkout --', which would" >&2
+    echo "discard uncommitted changes to any file it touches:" >&2
+    git status --porcelain --untracked-files=no | sed 's/^/    /' >&2
+    exit 2
+fi
+
 killed=0
 survived=0
 declare -a SURVIVORS
