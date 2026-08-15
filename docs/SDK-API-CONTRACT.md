@@ -36,11 +36,17 @@ Not because it was written first — it was written last. Three reasons:
    `{count: 3, active: true}` silently ships `"3"` and `"true"`.
 2. It returns success. Every capture method returns `Bool`. Android returns `Unit`, so a
    caller cannot tell an accepted event from a dropped one.
-3. It collapses duplicated concepts. One `experiments(...)` with an `optimizationType`
-   replaces two near-identical `ModificationProvider` instances.
+3. It is explicit where Android is implicit — named instances, a settable flush interval,
+   an error type with cases rather than swallowed exceptions.
 
-Where Swift is wrong, the contract wins and Swift changes. One case exists today:
-`record()` argument order, frozen below.
+Where Swift is wrong, the contract wins and Swift changes. Two cases exist today:
+`record()` argument order, frozen below, and `experiments()`, which Swift implements and
+should not — see [Personalization](#personalization).
+
+**Canonical does not mean correct.** Swift is the starting shape because it is the newest
+and best-specified, not because it wins ties. Two of the decisions in this document went
+against it: `isOptedIn` on naming, and removing `experiments()` on product scope, where
+Android's deliberate removal was right and drafting from Swift had quietly overruled it.
 
 ## Initialisation
 
@@ -169,35 +175,28 @@ products(feedId, count = 10, fields = defaultFeedFields, productId?) -> Result<[
 `recommendation(id, quantity, fields, productId)` against `/feeds/{id}/data` — so this is
 a rename, not new work.
 
-### `experiments()` — DISPUTED, do not build to this yet
+### `experiments()` is deliberately NOT in the mobile SDKs
 
-```
-experiments(names?, groups?, optimizationType?, productId?) -> Result<[ExperimentChoice]>
-```
+**Decided 2026-08-15. Experiment and personalization assignment is an intemptjs
+capability.** It does not belong in a mobile client SDK, and no mobile SDK should add it.
 
-Two documents currently contradict each other, and this section is **not** authoritative
-until that is resolved:
+This reverses an earlier draft of this document, which specified `experiments()` because
+the contract was drafted from `intempt-swift`, which implements it. That was the drafting
+error: `intempt-android` had already removed `ModificationProvider`, `Intempt.experiment`
+and `Intempt.personalization` as a deliberate product decision, documented in its
+`CLAUDE.md`, and writing the contract from one implementation quietly overruled it.
 
-- `intempt-swift` implements `experiments()`, and this contract was drafted from it.
-- `intempt-android/CLAUDE.md` has a section titled *"Experiments and personalizations are
-  not in this SDK"*, stating they are an intemptjs capability and that
-  `ModificationProvider`, `Intempt.experiment` and `Intempt.personalization` were
-  **deliberately removed**. `app/api/app.api` confirms the removal — only
-  `recommendation()` remains.
+So the removal direction is Swift, not Android:
 
-So this is a **product decision about which surfaces belong in a mobile SDK**, not an
-engineering divergence, and it has three possible answers:
+| SDK | Action |
+|---|---|
+| `intempt-android` | none — already removed. `recommendation()` stays |
+| `intempt-swift` | remove `experiments()`, `ExperimentChoice`, `OptimizationType` |
+| `intempt-reactnative` | remove the bridged method, spec entry and fixtures |
 
-1. Android re-adds it — the contract wins and the removal is reversed.
-2. Swift removes it — Android's decision was right and Swift over-built.
-3. It is genuinely platform-divergent and moves to accepted divergences with a reason.
-
-Until this is decided, neither SDK should build to this section. `OptimizationType`
-(`experiment` / `personalization`) is recorded here as the shape *if* answer 1 wins: one
-method with a discriminator, rather than two provider objects with identical method sets.
-
-`ExperimentChoice` carries `experience`, `variant`, `target?`, `name?` and an untyped
-variant payload. `name` is nil for `choose-web` responses, which return ids only.
+Recommendation feeds are **unaffected** and stay on every platform — see `products()`
+above. The two were conflated because Android's `ModificationProvider` and its feed call
+sat next to each other; they are different capabilities against different endpoints.
 
 `products()` defaults `fields` to a compact set on purpose. An unfielded request returns
 every catalog column including raw ML embedding vectors — measured at **443x** the
