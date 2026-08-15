@@ -175,24 +175,42 @@ products(feedId, count = 10, fields = defaultFeedFields, productId?) -> Result<[
 `recommendation(id, quantity, fields, productId)` against `/feeds/{id}/data` — so this is
 a rename, not new work.
 
-### `experiments()` is deliberately NOT in the mobile SDKs
+### `experiments()` is deliberately NOT in any SDK
 
-**Decided 2026-08-15. Experiment and personalization assignment is an intemptjs
-capability.** It does not belong in a mobile client SDK, and no mobile SDK should add it.
+**Decided 2026-08-15. There is no server-side support for experiment and
+personalization assignment on mobile SDKs or server SDKs.** Assignment is an intemptjs
+capability. No SDK should expose it, and this is not a mobile-only scope decision.
+
+The endpoint answers, which is what made this easy to get wrong. Probed against the live
+project:
+
+```
+POST /optimization/choose-api  ->  200 {"choices":[]}
+```
+
+A `200` with an empty set is indistinguishable from "this profile has no assignments yet",
+so a client could ship the method, call it forever, and never branch on a result.
 
 This reverses an earlier draft of this document, which specified `experiments()` because
-the contract was drafted from `intempt-swift`, which implements it. That was the drafting
-error: `intempt-android` had already removed `ModificationProvider`, `Intempt.experiment`
-and `Intempt.personalization` as a deliberate product decision, documented in its
-`CLAUDE.md`, and writing the contract from one implementation quietly overruled it.
+the contract was drafted from `intempt-swift`, which implemented it. Writing a contract
+from one implementation promotes that implementation's surface to a requirement.
 
-So the removal direction is Swift, not Android:
+Removal is required on every SDK that has it. Verified against each repository's default
+branch on 2026-08-15:
 
-| SDK | Action |
-|---|---|
-| `intempt-android` | none — already removed. `recommendation()` stays |
-| `intempt-swift` | remove `experiments()`, `ExperimentChoice`, `OptimizationType` |
-| `intempt-reactnative` | remove the bridged method, spec entry and fixtures |
+| SDK | Action | State when checked |
+|---|---|---|
+| `intempt-swift` | remove `experiments()`, `ExperimentChoice`, `OptimizationType` | done |
+| `intempt-reactnative` | remove the bridged method, spec entry and fixtures | done |
+| `intempt-android` | **removal required** — `ModificationProvider`, `Intempt.experiment`, `Intempt.personalization` | still present in `core/Intempt.kt`, `core/types/interfaces.kt`, `modifications/Modifications.service.kt`, `Modification.component.kt`, `proguard-rules.pro`, with `ModificationsUnitTest.kt` and two README sections |
+| `node` / `python` / `php` | must not be written with it | pages in draft |
+
+An earlier revision of this section claimed Android had already removed these "as a
+deliberate product decision, documented in its `CLAUDE.md`". That was wrong on both
+counts — `intempt-android` has no `CLAUDE.md`, and the capability is live in its code —
+and it mattered, because the action table told Android to do nothing. Swift and React
+Native would have removed theirs while Android kept its, which is precisely the
+divergence this document exists to prevent.
 
 Recommendation feeds are **unaffected** and stay on every platform — see `products()`
 above. The two were conflated because Android's `ModificationProvider` and its feed call
@@ -376,9 +394,10 @@ is a different failure with the same consequence: nothing prints it, it is hande
 request.
 
 `intempt-android` shipped `QueueConfig.getAuthorization()` returning the base64 ingestion
-credential in its published API surface. It is the second occurrence — `ConfigManagerService.token()`
-was the first, already recorded as fixed in that repo's `CLAUDE.md` — and it came back
-inside the vendored queue package where nobody was looking. Every caller was already in
+credential in its published API surface. It is the second occurrence — `ConfigManagerService`
+was the first — and it came back inside the vendored queue package where nobody was
+looking. (Both live in the 3.0 work; `main` carries `ConfigManager.service.kt` and no queue
+package, so this is not checkable against the default branch.) Every caller was already in
 the same package, so package-private removed it at zero cost. It was public for no reason
 at all.
 
