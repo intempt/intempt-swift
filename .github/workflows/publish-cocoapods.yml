@@ -1,0 +1,56 @@
+name: Publish to CocoaPods
+
+# Manual only. Publishing to trunk is irreversible in practice — `pod trunk
+# delete` exists but is discouraged and breaks anyone who already resolved the
+# version — so this never fires on a push or a tag.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (must match Intempt.podspec and an existing tag)'
+        required: true
+
+jobs:
+  publish:
+    name: pod trunk push
+    # A macOS runner, because `pod trunk push` validates the spec by BUILDING it,
+    # and that needs an iOS simulator runtime. A developer machine without one
+    # cannot publish at all: `pod spec lint` fails with "Could not find a `ios`
+    # simulator" no matter which --skip flags are passed. That is what sent this
+    # to CI rather than a laptop.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm the tag exists and matches the podspec
+        run: |
+          VERSION='${{ inputs.version }}'
+          SPEC_VERSION=$(grep -E "s\.version\s*=" Intempt.podspec | head -1 | sed -E "s/.*'([^']+)'.*/\1/")
+          if [ "$VERSION" != "$SPEC_VERSION" ]; then
+            echo "input version $VERSION != podspec version $SPEC_VERSION" >&2
+            exit 1
+          fi
+          git fetch --tags --quiet
+          git rev-parse "v$VERSION" >/dev/null 2>&1 || {
+            echo "tag v$VERSION does not exist — CocoaPods resolves the source from it" >&2
+            exit 1
+          }
+          echo "publishing Intempt $VERSION from tag v$VERSION"
+
+      - name: Lint
+        run: pod lib lint Intempt.podspec --allow-warnings
+
+      - name: Publish
+        env:
+          COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
+        run: pod trunk push Intempt.podspec --allow-warnings
+
+      - name: Verify it is resolvable
+        run: |
+          for _ in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://trunk.cocoapods.org/api/v1/pods/Intempt)
+            [ "$code" = "200" ] && { echo "published and resolvable"; exit 0; }
+            sleep 15
+          done
+          echo "trunk still not serving the pod after 5 minutes" >&2
+          exit 1
