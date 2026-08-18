@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Without this key iOS never issues a device token: registerForRemoteNotifications() calls
+	  didFailToRegisterForRemoteNotificationsWithError instead, so setPushToken is never reached and
+	  apns_token_<sourceId> is never written. The demo had the whole registration path wired
+	  correctly and could not have received a token.
+
+	  `development` is what a build installed from Xcode needs. It also decides which Apple gateway
+	  will accept the resulting token: a development token is a SANDBOX token, so the Intempt APNs
+	  destination sending to it MUST have `sandbox` enabled. The destination deliberately defaults to
+	  production (INTG-DEST-009), which is right for real customers and wrong for this build — with
+	  the default, every send to a token from this app fails BadDeviceToken.
+
+	  A TestFlight or App Store build needs `production` here. Xcode rewrites this for a release
+	  archive when the provisioning profile is a distribution one.
+	-->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>
