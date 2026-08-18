@@ -50,6 +50,12 @@ and the `v0.1.1` git tag the podspec resolves against. `scripts/check-version-sy
 fails CI when they disagree, because a pod that ships reporting a version it is
 not only surfaces when someone debugs a support ticket against the wrong source.
 
+Publishing a new version is documented in [docs/RELEASING.md](docs/RELEASING.md).
+Two things there are worth knowing before you need them: the git tag *is* the
+Swift Package Manager release, and pushing that tag does **not** publish to
+CocoaPods — that step is a manual workflow, and it refuses to run until the tag
+exists.
+
 ## Quick start
 
 ```swift
