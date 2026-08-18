@@ -42,13 +42,19 @@ pod 'Intempt', '~> 0.1.0'
 This is also what a React Native or other cross-platform wrapper depends on:
 
 ```ruby
-s.dependency 'Intempt', '0.1.0'
+s.dependency 'Intempt', '0.1.1'
 ```
 
 The version appears in three places — `Intempt.podspec`, `Intempt.sdkVersion`,
-and the `v0.1.0` git tag the podspec resolves against. `scripts/check-version-sync.sh`
+and the `v0.1.1` git tag the podspec resolves against. `scripts/check-version-sync.sh`
 fails CI when they disagree, because a pod that ships reporting a version it is
 not only surfaces when someone debugs a support ticket against the wrong source.
+
+Publishing a new version is documented in [docs/RELEASING.md](docs/RELEASING.md).
+Two things there are worth knowing before you need them: the git tag *is* the
+Swift Package Manager release, and pushing that tag does **not** publish to
+CocoaPods — that step is a manual workflow, and it refuses to run until the tag
+exists.
 
 ## Quick start
 

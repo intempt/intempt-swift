@@ -3,7 +3,25 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1] — 2026-08-18
+
+### Added
+
+- **Coverage measurement.** `swift test --enable-code-coverage` plus
+  `scripts/coverage.sh`, reporting line/function/region coverage to the job log
+  and the run summary. Reports without gating: `COVERAGE_MIN` turns enforcement
+  on once a floor is chosen from a real figure. First run reports 88.95% line
+  coverage.
+- **Init-cost measurement.** `InitPerformanceTests` and a non-parallel `perf`
+  CI job measuring cold init, warm init and one `track()` enqueue. First run
+  reports 7.08 ms cold init and 0.22 ms median enqueue.
+
+No changes to the shipped SDK. Every file under `Sources/` is byte-identical to
+0.1.0 apart from the `sdkVersion` constant, so upgrading is a no-op for
+behaviour. This release exists so the version reported by the SDK matches the
+tag the measurement work landed under.
+
+## [0.1.0] — 2026-08-16
 
 ### Added
 

@@ -28,7 +28,19 @@ jobs:
           INTEMPT_ORG_ID: ${{ secrets.INTEMPT_ORG_ID }}
           INTEMPT_PROJECT_ID: ${{ secrets.INTEMPT_PROJECT_ID }}
           INTEMPT_SOURCE_ID: ${{ secrets.INTEMPT_SOURCE_ID }}
-        run: swift test --parallel
+        run: swift test --parallel --enable-code-coverage
+
+      # This repo had no coverage of any kind — not a low number, no number.
+      # The mutation gate is a stronger signal than coverage on the fifteen
+      # behaviours it plants defects in, and silent about the other ~2,700
+      # lines. This says which of those the suite never touches.
+      #
+      # Reports without gating, on purpose. A floor invented before anyone has
+      # seen the real figure is a number pulled from the air, and the first PR
+      # it blocks teaches everyone to route around it. Land the floor in a
+      # follow-up, set from what this actually reports.
+      - name: Coverage
+        run: ./scripts/coverage.sh
 
   compile-matrix:
     name: compile all platforms
@@ -116,6 +128,32 @@ jobs:
           INTEMPT_SOURCE_ID: ${{ secrets.INTEMPT_SOURCE_ID }}
         run: ./scripts/mutation-test.sh
 
+  perf:
+    name: init cost
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app
+
+      # What the SDK costs the app that embeds it. Nothing measured this
+      # before, so the audit scored the SDK's runtime cost as zero — not
+      # "slow", but never measured.
+      #
+      # Deliberately NOT --parallel, and a job of its own. `swift test
+      # --parallel` runs bundles concurrently, and a wall-clock number taken
+      # while other suites compete for the same cores measures the scheduler,
+      # not the SDK. The tests skip themselves unless INTEMPT_PERF=1, so they
+      # cost the main `test` job nothing.
+      - name: Measure initialize and track
+        env:
+          INTEMPT_PERF: "1"
+        run: swift test --filter InitPerformanceTests
+    # NOTE: the assertion in this job is a catastrophe tripwire (250 ms mean
+    # cold init), not a budget. Once a few runs have reported real figures,
+    # tighten it to something derived from them — see the file comment in
+    # Tests/IntemptTests/InitPerformanceTests.swift.
+
   lint:
     name: format + secrets
     runs-on: macos-15
@@ -162,8 +200,30 @@ jobs:
       #
       # --allow-warnings: the spec is warning-clean today, but a warning is not
       # worth failing a release over. An error is.
-      - name: pod spec lint
-        run: pod spec lint Intempt.podspec --allow-warnings
+      #
+      # Which linter depends on whether the tag exists yet, and it has to:
+      # `pod spec lint` clones the REMOTE at s.source[:tag], so on a version-bump
+      # PR it fails with "Remote branch v0.1.1 not found in upstream origin" —
+      # the tag cannot exist yet, because tags are cut from main after the bump
+      # merges. Running spec lint unconditionally makes every release PR red for
+      # a reason that is not a defect.
+      #
+      # `pod lib lint` validates the same spec against the local working tree
+      # instead, which is exactly what is wanted before the tag exists. Once it
+      # does exist, spec lint is the stronger check — it proves what CocoaPods
+      # will actually resolve — so keep using it. This is the same split
+      # mixpanel-swift makes in its release workflow, for the same reason.
+      - name: pod lint
+        run: |
+          version=$(grep -E "^\s*s\.version\s*=" Intempt.podspec | sed -E "s/.*'([^']+)'.*/\1/")
+          if git ls-remote --tags --exit-code origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "tag v$version exists — validating what CocoaPods will resolve"
+            pod spec lint Intempt.podspec --allow-warnings
+          else
+            echo "tag v$version does not exist yet — validating the working tree"
+            echo "(spec lint runs on main once the tag is cut; see docs/RELEASING.md)"
+            pod lib lint Intempt.podspec --allow-warnings
+          fi
 
   license:
     name: attribution present
@@ -208,7 +268,7 @@ jobs:
   all-green:
     name: all-green
     runs-on: ubuntu-latest
-    needs: [test, compile-matrix, demo, lint, license, podspec, mutation]
+    needs: [test, compile-matrix, demo, lint, license, podspec, mutation, perf]
     if: always()
     steps:
       # Branch protection points at this single job, so adding a job above
