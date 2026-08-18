@@ -200,8 +200,30 @@ jobs:
       #
       # --allow-warnings: the spec is warning-clean today, but a warning is not
       # worth failing a release over. An error is.
-      - name: pod spec lint
-        run: pod spec lint Intempt.podspec --allow-warnings
+      #
+      # Which linter depends on whether the tag exists yet, and it has to:
+      # `pod spec lint` clones the REMOTE at s.source[:tag], so on a version-bump
+      # PR it fails with "Remote branch v0.1.1 not found in upstream origin" —
+      # the tag cannot exist yet, because tags are cut from main after the bump
+      # merges. Running spec lint unconditionally makes every release PR red for
+      # a reason that is not a defect.
+      #
+      # `pod lib lint` validates the same spec against the local working tree
+      # instead, which is exactly what is wanted before the tag exists. Once it
+      # does exist, spec lint is the stronger check — it proves what CocoaPods
+      # will actually resolve — so keep using it. This is the same split
+      # mixpanel-swift makes in its release workflow, for the same reason.
+      - name: pod lint
+        run: |
+          version=$(grep -E "^\s*s\.version\s*=" Intempt.podspec | sed -E "s/.*'([^']+)'.*/\1/")
+          if git ls-remote --tags --exit-code origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "tag v$version exists — validating what CocoaPods will resolve"
+            pod spec lint Intempt.podspec --allow-warnings
+          else
+            echo "tag v$version does not exist yet — validating the working tree"
+            echo "(spec lint runs on main once the tag is cut; see docs/RELEASING.md)"
+            pod lib lint Intempt.podspec --allow-warnings
+          fi
 
   license:
     name: attribution present

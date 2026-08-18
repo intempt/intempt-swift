@@ -80,6 +80,13 @@ Edit both version sources and add a `CHANGELOG.md` section. Verify locally:
 Merge to `main` before tagging. A tag pointing at a commit that never landed on
 `main` is how a release becomes unreproducible.
 
+CI's `podspec` job picks its linter based on whether the tag exists yet, so a
+bump PR is green before the tag is cut. `pod lib lint` validates the working
+tree; once `v<version>` exists, the job switches to `pod spec lint`, which
+clones the remote at the tag and proves what CocoaPods will actually resolve.
+Running spec lint on a bump PR fails with `Remote branch v0.1.1 not found in
+upstream origin` — expected, not a defect, and the reason for the split.
+
 ### 2. Tag — this *is* the SPM release
 
 ```sh
