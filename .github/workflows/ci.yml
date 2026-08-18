@@ -28,7 +28,19 @@ jobs:
           INTEMPT_ORG_ID: ${{ secrets.INTEMPT_ORG_ID }}
           INTEMPT_PROJECT_ID: ${{ secrets.INTEMPT_PROJECT_ID }}
           INTEMPT_SOURCE_ID: ${{ secrets.INTEMPT_SOURCE_ID }}
-        run: swift test --parallel
+        run: swift test --parallel --enable-code-coverage
+
+      # This repo had no coverage of any kind — not a low number, no number.
+      # The mutation gate is a stronger signal than coverage on the fifteen
+      # behaviours it plants defects in, and silent about the other ~2,700
+      # lines. This says which of those the suite never touches.
+      #
+      # Reports without gating, on purpose. A floor invented before anyone has
+      # seen the real figure is a number pulled from the air, and the first PR
+      # it blocks teaches everyone to route around it. Land the floor in a
+      # follow-up, set from what this actually reports.
+      - name: Coverage
+        run: ./scripts/coverage.sh
 
   compile-matrix:
     name: compile all platforms
