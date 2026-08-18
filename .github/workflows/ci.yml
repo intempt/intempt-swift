@@ -116,6 +116,32 @@ jobs:
           INTEMPT_SOURCE_ID: ${{ secrets.INTEMPT_SOURCE_ID }}
         run: ./scripts/mutation-test.sh
 
+  perf:
+    name: init cost
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app
+
+      # What the SDK costs the app that embeds it. Nothing measured this
+      # before, so the audit scored the SDK's runtime cost as zero — not
+      # "slow", but never measured.
+      #
+      # Deliberately NOT --parallel, and a job of its own. `swift test
+      # --parallel` runs bundles concurrently, and a wall-clock number taken
+      # while other suites compete for the same cores measures the scheduler,
+      # not the SDK. The tests skip themselves unless INTEMPT_PERF=1, so they
+      # cost the main `test` job nothing.
+      - name: Measure initialize and track
+        env:
+          INTEMPT_PERF: "1"
+        run: swift test --filter InitPerformanceTests
+    # NOTE: the assertion in this job is a catastrophe tripwire (250 ms mean
+    # cold init), not a budget. Once a few runs have reported real figures,
+    # tighten it to something derived from them — see the file comment in
+    # Tests/IntemptTests/InitPerformanceTests.swift.
+
   lint:
     name: format + secrets
     runs-on: macos-15
@@ -208,7 +234,7 @@ jobs:
   all-green:
     name: all-green
     runs-on: ubuntu-latest
-    needs: [test, compile-matrix, demo, lint, license, podspec, mutation]
+    needs: [test, compile-matrix, demo, lint, license, podspec, mutation, perf]
     if: always()
     steps:
       # Branch protection points at this single job, so adding a job above
