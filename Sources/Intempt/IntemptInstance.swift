@@ -92,6 +92,7 @@ public final class IntemptInstance {
     private let network: Network
     let flusher: Flush
     private let personalization: Personalization
+    private let flags: Flags
     var automatic: AutomaticEvents!
     /// Held so its observers live as long as the instance; `deinit` removes them.
     private var lifecycle: AppLifecycle!
@@ -124,6 +125,9 @@ public final class IntemptInstance {
             db: db, network: network, credentials: credentials,
             orgId: orgId, projectId: projectId, sourceId: sourceId)
         self.personalization = Personalization(
+            network: network, credentials: credentials,
+            orgId: orgId, projectId: projectId, sourceId: sourceId)
+        self.flags = Flags(
             network: network, credentials: credentials,
             orgId: orgId, projectId: projectId, sourceId: sourceId)
 
@@ -413,6 +417,117 @@ public final class IntemptInstance {
     ///   (docs/CONTRACT.md). Widen it deliberately, never by omission.
     /// - Parameter productId: required by feeds whose input is `PRODUCT`.
     ///   Omitting it there returns an empty list, not an error.
+    // MARK: - Flags
+
+    /// The value assigned to this person for `key`, or `defaultValue` if the service did not
+    /// answer.
+    ///
+    /// Ask for a KEY, never a mode. Whether the key names an experiment, a personalization or a
+    /// flag is the platform's business: its serving query filters on channel and status and never
+    /// on mode.
+    public func variation(
+        key: String,
+        context: FlagContext? = nil,
+        defaultValue: JSONValue,
+        completion: @escaping (JSONValue) -> Void
+    ) {
+        variationDetail(key: key, context: context, defaultValue: defaultValue) {
+            completion($0.value ?? defaultValue)
+        }
+    }
+
+    /// As `variation`, plus WHY.
+    ///
+    /// The reason is what lets a caller tell a deliberate off state from a request the service
+    /// never answered — the two used to be the same absent entry.
+    public func variationDetail(
+        key: String,
+        context: FlagContext? = nil,
+        defaultValue: JSONValue,
+        completion: @escaping (FlagDetail) -> Void
+    ) {
+        // The device identifier is filled in from the SDK's own identity when the caller does not
+        // supply one, because it is the value that survives sign-in.
+        let resolved = context ?? FlagContext(profileId: identity.profileId)
+        flags.detail(key: key, context: resolved) { detail in
+            guard let detail else {
+                return completion(FlagDetail(value: defaultValue, reason: Flags.unanswered))
+            }
+            completion(
+                FlagDetail(
+                    value: detail.value ?? defaultValue,
+                    reason: detail.reason,
+                    variant: detail.variant))
+        }
+    }
+
+    /// Every key assigned to this person, in one call.
+    public func allFlags(
+        context: FlagContext? = nil,
+        completion: @escaping ([String: JSONValue]) -> Void
+    ) {
+        flags.all(context: context ?? FlagContext(profileId: identity.profileId), completion: completion)
+    }
+
+    public func boolVariation(
+        key: String,
+        context: FlagContext? = nil,
+        defaultValue: Bool,
+        completion: @escaping (Bool) -> Void
+    ) {
+        variation(key: key, context: context, defaultValue: .bool(defaultValue)) { value in
+            // A served value of the wrong type is a misconfiguration, not something to coerce:
+            // the string "false" is truthy in most languages, and a silent coercion is
+            // indistinguishable from a correct answer.
+            if case .bool(let b) = value { completion(b) } else { completion(defaultValue) }
+        }
+    }
+
+    public func stringVariation(
+        key: String,
+        context: FlagContext? = nil,
+        defaultValue: String,
+        completion: @escaping (String) -> Void
+    ) {
+        variation(key: key, context: context, defaultValue: .string(defaultValue)) { value in
+            if case .string(let s) = value { completion(s) } else { completion(defaultValue) }
+        }
+    }
+
+    public func numberVariation(
+        key: String,
+        context: FlagContext? = nil,
+        defaultValue: Double,
+        completion: @escaping (Double) -> Void
+    ) {
+        variation(key: key, context: context, defaultValue: .number(defaultValue)) { value in
+            if case .number(let n) = value { completion(n) } else { completion(defaultValue) }
+        }
+    }
+
+    public func jsonVariation(
+        key: String,
+        context: FlagContext? = nil,
+        defaultValue: [String: JSONValue],
+        completion: @escaping ([String: JSONValue]) -> Void
+    ) {
+        variation(key: key, context: context, defaultValue: .object(defaultValue)) { value in
+            if case .object(let o) = value { completion(o) } else { completion(defaultValue) }
+        }
+    }
+
+    /// Calls back immediately.
+    ///
+    /// Present so the cross-SDK surface is the same everywhere, and so a caller porting from an
+    /// SDK that polls a local flag store does not have to remove the call. Evaluation here is
+    /// remote: each `variation` is a request, so there is no local state to wait for.
+    public func waitForInitialization(
+        timeoutMs: Int? = nil,
+        completion: @escaping () -> Void
+    ) {
+        completion()
+    }
+
     public func products(
         feedId: String,
         count: Int = 10,
