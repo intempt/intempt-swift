@@ -24,7 +24,8 @@ struct ContentView: View {
             List {
                 trackingSection
                 commerceSection
-                personalizationSection
+                flagsSection
+            personalizationSection
                 privacySection
                 deliverySection
                 autocaptureSection
@@ -121,6 +122,46 @@ struct ContentView: View {
     }
 
     // MARK: - Recommendations
+
+    private var flagsSection: some View {
+        Section("Flags") {
+            Button("Read a flag") {
+                // Ask for a KEY. Whether it names an experiment, a personalization or a flag is
+                // the platform's business, and this call does not change when that does.
+                //
+                // The default is not optional and it is a real decision: it is what you get when
+                // Intempt cannot be reached. Choose the behaviour you already have.
+                intempt?.boolVariation(key: "new_checkout", defaultValue: false) { on in
+                    DemoLog.append("new_checkout → \(on)")
+                }
+            }
+            .accessibilityIdentifier("flag-button")
+
+            Button("Read a flag with its reason") {
+                // The reason separates a deliberate holdout from an outage. Without it both are
+                // the same absent value and you cannot tell a rollout decision from a failure.
+                intempt?.variationDetail(
+                    key: "pricing_cta",
+                    defaultValue: .string("Get started")
+                ) { detail in
+                    DemoLog.append(
+                        "pricing_cta → \(detail.value ?? .null) "
+                            + "(reason: \(detail.reason.rawValue), variant: \(detail.variant ?? "none"))")
+                }
+            }
+            .accessibilityIdentifier("flag-detail-button")
+
+            Button("Read every flag") {
+                intempt?.allFlags { values in
+                    DemoLog.append("allFlags → \(values.count) key(s)")
+                    for (key, value) in values {
+                        DemoLog.append("  \(key) = \(value)")
+                    }
+                }
+            }
+            .accessibilityIdentifier("all-flags-button")
+        }
+    }
 
     private var personalizationSection: some View {
         Section("Recommendations") {
