@@ -45,7 +45,33 @@ jobs:
           INTEMPT_ORG_ID: ${{ secrets.INTEMPT_ORG_ID }}
           INTEMPT_PROJECT_ID: ${{ secrets.INTEMPT_PROJECT_ID }}
           INTEMPT_SOURCE_ID: ${{ secrets.INTEMPT_SOURCE_ID }}
-        run: swift test --parallel --enable-code-coverage
+        run: swift test --parallel --enable-code-coverage --xunit-output test-results.xml
+
+      # swift test prints no usable total. Its own summary line reads "Test run with 0 tests
+      # passed" because swift-testing reports only ITS lane, and the XCTest count never appears in
+      # the log at all - so this job was green with no number a reviewer could quote, which is how
+      # a suite that stopped collecting reads exactly like one that passed.
+      - name: Report the test total
+        if: always()
+        run: |
+          set -euo pipefail
+          f=$(ls test-results*.xml 2>/dev/null | head -1 || true)
+          if [ -z "$f" ]; then
+            echo "::error::no xunit output - the suite did not run"; exit 1
+          fi
+          python3 - "$f" <<'PY'
+          import sys, os, xml.etree.ElementTree as ET
+          r = ET.parse(sys.argv[1]).getroot()
+          t = f = e = sk = 0
+          for s in ([r] if r.tag == 'testsuite' else r.iter('testsuite')):
+              t  += int(s.get('tests', 0));    f  += int(s.get('failures', 0))
+              e  += int(s.get('errors', 0));   sk += int(s.get('skipped', 0))
+          print(f"Executed {t} tests, with {f} failures and {e} errors ({sk} skipped)")
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as h:
+              h.write(f"**swift test** — executed {t}, failures {f}, errors {e}, skipped {sk}\n")
+          if t == 0:
+              raise SystemExit("::error::the xunit output reports 0 tests")
+          PY
 
       # This repo had no coverage of any kind — not a low number, no number.
       # The mutation gate is a stronger signal than coverage on the fifteen
