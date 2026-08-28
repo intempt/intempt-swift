@@ -202,8 +202,9 @@ feature flag that only one platform can read is not a feature flag.
 
 ```
 variation(key, context, defaultValue)         -> T
-variationDetail(key, context, defaultValue)   -> { value, variant, reason }
 allFlags(context)                             -> Map<key, value>
+
+variationDetail(key, context, defaultValue)   -> WITHHELD, see rule 3
 
 boolVariation   (key, context, defaultValue: Bool)
 stringVariation (key, context, defaultValue: String)
@@ -223,8 +224,20 @@ Four rules, each of which is a correction to the shape being replaced:
 2. **`defaultValue` is required, not optional.** It is what the call returns on a network
    failure, a timeout, an unknown key, or a malformed response. Optional is how `undefined`
    reaches production during an outage.
-3. **`variationDetail` returns `reason`.** This is the half that answers the 2026-08-15
-   objection, and no SDK ships `variation()` without it.
+3. **`variationDetail` is WITHHELD until the platform sends a reason.** It was specified
+   here as the half answering the 2026-08-15 objection, and the objection stands — but the
+   evaluation response does not carry a reason today. A held-back person's experience is
+   absent from it entirely rather than present with a cause, so every reason the method
+   could return would read `off`, including for someone who WAS targeted and did receive
+   the variant. Value says on, reason says off: a wrong answer, not a missing one, from
+   the one method whose entire job is explaining why.
+
+   No SDK exposes it. Each keeps the logic internal, because `variation` uses it for the
+   value — which is correct either way — and each turns it public in the same change that
+   adds `reason` to the serving contract.
+
+   `variant` goes with it. It was the experience's selector GROUP, not the variant name,
+   which the platform never carries to the response layer at all.
 4. **No local evaluation.** Remote only. Rule-shaped local evaluation is deliberately out
    of scope on every platform.
 
