@@ -43,8 +43,9 @@ final class GoldenWireTests: XCTestCase {
         // --- URL ---------------------------------------------------------
         XCTAssertEqual(
             request.url?.absoluteString,
-            "https://api.intempt.com/v1/acme/projects/ecommerce/sources/77/track",
-            "URL must match intemptjs autoTracker.module.ts:163")
+            "https://api.intempt.com/v1/acme/projects/ecommerce/sources/77/track?ip=1",
+            "URL must match intemptjs autoTracker.transport.ts — both SDKs now carry ?ip=, "
+                + "which states whether the platform may derive location from the request address")
 
         // --- Method + headers -------------------------------------------
         XCTAssertEqual(request.httpMethod, "POST")

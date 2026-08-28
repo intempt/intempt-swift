@@ -23,7 +23,7 @@ final class NetworkTests: XCTestCase {
 
         XCTAssertEqual(
             req.url?.absoluteString,
-            "https://api.intempt.com/v1/acme/projects/web/sources/42/track")
+            "https://api.intempt.com/v1/acme/projects/web/sources/42/track?ip=1")
         XCTAssertEqual(req.httpMethod, "POST")
         XCTAssertEqual(req.value(forHTTPHeaderField: "Content-Type"), "application/json")
         XCTAssertEqual(

@@ -29,8 +29,10 @@ final class EndpointTests: XCTestCase {
 
     /// Exactly one `?ip=`. A second would be parsed as part of the first value.
     func testGeolocationFlagAppearsExactlyOnce() {
-        let path = Endpoint.track(org: "acme", project: "web", sourceId: "42",
-                                  useIPForGeolocation: true).path
+        let path = Endpoint.track(
+            org: "acme", project: "web", sourceId: "42",
+            useIPForGeolocation: true
+        ).path
         XCTAssertEqual(path.components(separatedBy: "?ip=").count - 1, 1)
     }
 
