@@ -11,13 +11,14 @@ import Foundation
 ///    query filters on channel and status and never on mode.
 /// 2. `defaultValue` is REQUIRED. It is what a caller receives on a network failure, a timeout, an
 ///    unknown key or a malformed response.
-/// 3. `variationDetail` carries a `reason`. Without it a caller cannot tell a deliberate off state
+/// 3. `variationDetail` is NOT exposed. It would carry a `reason` the platform does not send, so
+///    it could not tell a deliberate off state
 ///    from a request the service never answered — which is exactly why this SDK exposed no
 ///    assignment at all until the serving contract could distinguish the two.
 /// 4. Evaluation is REMOTE only. There is no local rule engine and no flag store to poll.
 
 /// Why an evaluation returned the value it did.
-public enum FlagReason: String, Sendable, Equatable {
+enum FlagReason: String, Sendable, Equatable {
     case targeted
     case holdout
     case notTargeted = "not_targeted"
@@ -39,17 +40,14 @@ public struct FlagContext: Sendable, Equatable {
     }
 }
 
-/// A value and why it was returned.
-public struct FlagDetail: Sendable, Equatable {
-    public let value: JSONValue?
-    public let reason: FlagReason
-    /// The variant the platform selected, nil when nothing was served.
-    public let variant: String?
+/// A value and why it was returned. INTERNAL — see the note on `variationDetailInternal`.
+struct FlagDetail: Sendable, Equatable {
+    let value: JSONValue?
+    let reason: FlagReason
 
-    public init(value: JSONValue?, reason: FlagReason, variant: String? = nil) {
+    init(value: JSONValue?, reason: FlagReason) {
         self.value = value
         self.reason = reason
-        self.variant = variant
     }
 }
 
@@ -102,8 +100,7 @@ final class Flags {
                 FlagDetail(
                     value: choice["body"].map(JSONValue.from),
                     reason: FlagReason(rawValue: Flags.string(choice["reason"]) ?? "")
-                        ?? Flags.unanswered,
-                    variant: Flags.string(choice["group"])))
+                        ?? Flags.unanswered))
         }
     }
 

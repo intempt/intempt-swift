@@ -43,20 +43,11 @@ final class FlagsTests: XCTestCase {
         XCTAssertEqual(anonymous.profileId, "p-1")
     }
 
-    // MARK: detail
-
-    func testDetailCarriesValueReasonAndVariant() {
-        let detail = FlagDetail(value: .bool(true), reason: .targeted, variant: "B")
-        XCTAssertEqual(detail.value, .bool(true))
-        XCTAssertEqual(detail.reason, .targeted)
-        XCTAssertEqual(detail.variant, "B")
-    }
-
-    func testAHoldoutIsAnAnsweredEvaluation() {
-        // Before the reason existed, a held-back person and a failed request were both an absent
-        // entry and a caller could not tell them apart.
-        let detail = FlagDetail(value: nil, reason: .holdout)
-        XCTAssertEqual(detail.reason, .holdout)
-        XCTAssertNil(detail.variant)
-    }
+    // The two FlagDetail tests that were here are deleted rather than adapted. Each built a
+    // FlagDetail and asserted it held what had just been put in it -- a memberwise initialiser
+    // storing its arguments, which is a property of the language and cannot fail. Neither could
+    // ever have gone red, and `variant` being wrong all along is what they failed to catch.
+    //
+    // FlagDetail is internal now anyway: it carries a reason the platform does not send, so
+    // variationDetail is not exposed until the serving contract carries one.
 }
