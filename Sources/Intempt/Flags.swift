@@ -98,7 +98,12 @@ final class Flags {
             }
             completion(
                 FlagDetail(
-                    value: choice["body"].map(JSONValue.from),
+                    // A JSON null body is ABSENT, not a served value. `.map` alone produces
+                    // `.some(.null)`, and `?? defaultValue` upstream does not fire on that — so a
+                    // null body reached the caller as JSONValue.null instead of the default they
+                    // supplied. Every other SDK in this effort treats null as absent; this one
+                    // did not, and no test had ever exercised the path.
+                    value: choice["body"].map(JSONValue.from).flatMap { $0 == .null ? nil : $0 },
                     reason: FlagReason(rawValue: Flags.string(choice["reason"]) ?? "")
                         ?? Flags.unanswered))
         }
