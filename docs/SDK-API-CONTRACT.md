@@ -16,7 +16,8 @@ live here because the Swift SDK's shape is canonical, decided 2026-08-15.
 | Node | `intempt-node` | client surface only; see Server SDKs |
 | Python | `intempt-python` | client surface only; see Server SDKs |
 | PHP | `intempt-php` | client surface only; see Server SDKs |
-| JavaScript | `intemptjs` | out of scope, predates the contract |
+| JavaScript | `intempt-js` | **out of scope — see below.** `intemptjs` is the same repository under its former name |
+| Java | `intempt-java` | **read path only.** Feature flags and personalization; no capture, identity, consent or opt-out. Not published to Maven Central and carries no release tag |
 
 Server SDKs conform on the shared capture surface — `track`, `identify`, `group`,
 `alias`, `consent`, `optIn` / `optOut` — and diverge structurally everywhere a server has
@@ -25,6 +26,27 @@ no device, session or per-user state. Those divergences are enumerated under
 
 A divergence that is *gratuitous* rather than structural is a bug, and belongs in an
 issue rather than in the table.
+
+**Every shipped SDK appears in the table above, and a new SDK does not ship without an
+entry in it.** The table is the inventory, not a summary of one — an SDK absent from it is
+an SDK nobody has decided the shape of.
+
+### Why JavaScript is out of scope, and what that costs
+
+`intempt-js` predates this contract and ships a different shape: a three-state consent model
+with its own status and clear methods, rather than the four opt-out methods every other
+capture-class SDK exposes. Bringing it under the contract is a breaking change to the SDK
+with the largest install base, and doing it badly is worse than the inconsistency.
+
+Recorded as a deliberate exclusion rather than an oversight, so that the next person reading
+this table does not "fix" it into conformance without that decision being taken. The cost is
+real: a customer using both the web SDK and any other one meets two different opt-out APIs.
+
+### Why Java is listed but not conforming
+
+`intempt-java` carries the read path only. A capability present in three server SDKs and
+absent from the fourth is a defect in the fourth, not a fifth category, so it is listed here
+as incomplete rather than given a class of its own.
 
 ## Why the Swift shape
 
