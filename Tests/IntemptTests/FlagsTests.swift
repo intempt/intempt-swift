@@ -100,7 +100,7 @@ final class FlagsDetailTests: XCTestCase {
             .json(
                 200,
                 #"{"choices":[{"name":"checkout_v2","group":"B","body":true,"reason":"targeted"}]}"#
-            ),
+            )
         ])
         XCTAssertEqual(detail(f, "checkout_v2")?.value, .bool(true))
     }
