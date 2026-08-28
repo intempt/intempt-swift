@@ -36,7 +36,7 @@ final class GoldenWireTests: XCTestCase {
 
         let body = TrackEnvelope.wrap(models: [model])
         let request = try Network().makeRequest(
-            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77"),
+            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77", useIPForGeolocation: true),
             credentials: creds,
             body: body)
 
@@ -140,7 +140,7 @@ final class GoldenWireTests: XCTestCase {
         ]
 
         let request = try Network().makeRequest(
-            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77"),
+            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77", useIPForGeolocation: true),
             credentials: creds,
             body: TrackEnvelope.wrap(models: models))
 
@@ -185,7 +185,7 @@ final class GoldenWireTests: XCTestCase {
             ])
 
         let request = try Network().makeRequest(
-            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77"),
+            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77", useIPForGeolocation: true),
             credentials: creds,
             body: TrackEnvelope.wrap(models: [model]))
 
@@ -223,7 +223,7 @@ final class GoldenWireTests: XCTestCase {
         let entry = try XCTUnwrap(JSONHandler.deserializeData(rows[0].data) as? [String: Any])
 
         let request = try Network().makeRequest(
-            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77"),
+            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77", useIPForGeolocation: true),
             credentials: creds,
             body: TrackEnvelope.wrap([entry]))
 

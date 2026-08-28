@@ -285,7 +285,7 @@ final class LiveContractTests: IntemptTestCase {
         let credentials = try requireCredentials()
         let endpoint = Endpoint.track(
             org: credentials.orgId, project: credentials.projectId,
-            sourceId: credentials.sourceId)
+            sourceId: credentials.sourceId, useIPForGeolocation: true)
 
         var request = try Network().makeRequest(
             endpoint: endpoint,
@@ -322,7 +322,7 @@ final class LiveContractTests: IntemptTestCase {
         let request = try Network().makeRequest(
             endpoint: .track(
                 org: credentials.orgId, project: credentials.projectId,
-                sourceId: credentials.sourceId),
+                sourceId: credentials.sourceId, useIPForGeolocation: true),
             credentials: try IntemptCredentials(apiKey: credentials.apiKey),
             body: TrackEnvelope.wrap([
                 [

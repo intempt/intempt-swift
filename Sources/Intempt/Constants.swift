@@ -52,7 +52,7 @@ enum EventConstants {
 enum Endpoint {
     /// Batched events — identify, group, alias, record, track, product all
     /// funnel here as one mixed-type `{"track":[...]}` envelope.
-    case track(org: String, project: String, sourceId: String)
+    case track(org: String, project: String, sourceId: String, useIPForGeolocation: Bool)
     /// Consent is separate, unbatched and sent immediately.
     case consents(org: String, project: String)
     /// Experiments and personalizations, distinguished by an
@@ -63,8 +63,13 @@ enum Endpoint {
 
     var path: String {
         switch self {
-        case .track(let org, let project, let sourceId):
-            return "/\(org)/projects/\(project)/sources/\(sourceId)/track"
+        case .track(let org, let project, let sourceId, let useIPForGeolocation):
+            // `?ip=1` lets Intempt derive country, region and city from the address the request
+            // already arrives on; `?ip=0` asks it not to. The device never handles its own address
+            // and no third party is involved. Copied from mixpanel-swift's
+            // `useIPAddressForGeolocation`, so a customer migrating does not have to look it up.
+            return "/\(org)/projects/\(project)/sources/\(sourceId)/track?ip="
+                + (useIPForGeolocation ? "1" : "0")
         case .consents(let org, let project):
             return "/\(org)/projects/\(project)/consents/data"
         case .feed(let org, let project, let feedId):

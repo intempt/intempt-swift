@@ -17,7 +17,7 @@ final class NetworkTests: XCTestCase {
     func testTrackRequestShape() throws {
         let net = Network()
         let req = try net.makeRequest(
-            endpoint: .track(org: "acme", project: "web", sourceId: "42"),
+            endpoint: .track(org: "acme", project: "web", sourceId: "42", useIPForGeolocation: true),
             credentials: creds,
             body: ["track": []])
 
@@ -36,7 +36,7 @@ final class NetworkTests: XCTestCase {
     /// produced duplicate headers behind some proxies in the old SDK.
     func testContentLengthIsNotSetManually() throws {
         let req = try Network().makeRequest(
-            endpoint: .track(org: "a", project: "b", sourceId: "1"),
+            endpoint: .track(org: "a", project: "b", sourceId: "1", useIPForGeolocation: true),
             credentials: creds, body: ["track": []])
         XCTAssertNil(req.value(forHTTPHeaderField: "Content-Length"))
     }

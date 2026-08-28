@@ -80,12 +80,15 @@ final class Flush {
         orgId: String,
         projectId: String,
         sourceId: String,
+        useIPAddressForGeolocation: Bool = true,
         policy: RetryPolicy = RetryPolicy()
     ) {
         self.db = db
         self.network = network
         self.credentials = credentials
-        self.trackEndpoint = .track(org: orgId, project: projectId, sourceId: sourceId)
+        self.trackEndpoint = .track(
+            org: orgId, project: projectId, sourceId: sourceId,
+            useIPForGeolocation: useIPAddressForGeolocation)
         self.consentEndpoint = .consents(org: orgId, project: projectId)
         self.policy = policy
 

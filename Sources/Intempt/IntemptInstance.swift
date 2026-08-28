@@ -33,6 +33,19 @@ public final class IntemptInstance {
 
     /// Creates or returns the named instance.
     ///
+    /// - Parameter useIPAddressForGeolocation: Whether Intempt may derive country, region and city
+    ///   from the address the request already arrives on. Default `true`, matching mixpanel-swift's
+    ///   `useIPAddressForGeolocation`.
+    ///
+    ///   The SDK never reads or sends the device's address itself -- it sends `?ip=1` or `?ip=0`,
+    ///   and the platform resolves it from the connection against a local database and discards it
+    ///   before storing anything. No third party is involved.
+    ///
+    ///   Leaving this on means the app collects **Coarse Location**, because the derived
+    ///   country/region/city is stored. Apple's rule is that anything derived from data you send
+    ///   off device counts separately from the data itself, so the app's own privacy label must say
+    ///   so. Setting it to `false` stops the derivation and there is nothing to declare.
+    ///
     /// - Throws: `IntemptError.malformedAPIKey` if the key is not
     ///   `prefix.secret`; `IntemptError.missingConfiguration` if any
     ///   identifier is blank.
@@ -42,7 +55,8 @@ public final class IntemptInstance {
         orgId: String,
         projectId: String,
         sourceId: String,
-        instanceName: String = "default"
+        instanceName: String = "default",
+        useIPAddressForGeolocation: Bool = true
     ) throws -> IntemptInstance {
         let credentials = try IntemptCredentials(apiKey: apiKey)
         for (value, field) in [(orgId, "orgId"), (projectId, "projectId"), (sourceId, "sourceId")] {
@@ -58,7 +72,8 @@ public final class IntemptInstance {
             if let existing = instances[instanceName] { return existing }
             let created = IntemptInstance(
                 credentials: credentials, orgId: orgId, projectId: projectId,
-                sourceId: sourceId, instanceName: instanceName)
+                sourceId: sourceId, instanceName: instanceName,
+                useIPAddressForGeolocation: useIPAddressForGeolocation)
             instances[instanceName] = created
             created.automatic.checkVersion()
             created.flusher.startTimer()
@@ -106,6 +121,7 @@ public final class IntemptInstance {
         projectId: String,
         sourceId: String,
         instanceName: String,
+        useIPAddressForGeolocation: Bool = true,
         storeOverride: UserDefaults = .standard,
         databaseDirectory: URL? = nil,
         network: Network = Network()
@@ -122,7 +138,8 @@ public final class IntemptInstance {
         self.network = network
         self.flusher = Flush(
             db: db, network: network, credentials: credentials,
-            orgId: orgId, projectId: projectId, sourceId: sourceId)
+            orgId: orgId, projectId: projectId, sourceId: sourceId,
+            useIPAddressForGeolocation: useIPAddressForGeolocation)
         self.personalization = Personalization(
             network: network, credentials: credentials,
             orgId: orgId, projectId: projectId, sourceId: sourceId)
