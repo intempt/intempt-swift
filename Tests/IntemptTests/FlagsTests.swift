@@ -96,8 +96,12 @@ final class FlagsDetailTests: XCTestCase {
         // The fixture supplies "group" and "reason" and the serving response carries NEITHER
         // today — which is why variationDetail is not public and why asserting on them here
         // would prove nothing about the platform.
-        let (f, _) = flags([.json(200,
-            #"{"choices":[{"name":"checkout_v2","group":"B","body":true,"reason":"targeted"}]}"#)])
+        let (f, _) = flags([
+            .json(
+                200,
+                #"{"choices":[{"name":"checkout_v2","group":"B","body":true,"reason":"targeted"}]}"#
+            ),
+        ])
         XCTAssertEqual(detail(f, "checkout_v2")?.value, .bool(true))
     }
 
