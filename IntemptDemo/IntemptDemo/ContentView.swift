@@ -137,16 +137,12 @@ struct ContentView: View {
             }
             .accessibilityIdentifier("flag-button")
 
-            Button("Read a flag with its reason") {
-                // The reason separates a deliberate holdout from an outage. Without it both are
-                // the same absent value and you cannot tell a rollout decision from a failure.
-                intempt?.variationDetail(
+            Button("Read a string flag") {
+                intempt?.stringVariation(
                     key: "pricing_cta",
-                    defaultValue: .string("Get started")
-                ) { detail in
-                    DemoLog.append(
-                        "pricing_cta → \(detail.value ?? .null) "
-                            + "(reason: \(detail.reason.rawValue), variant: \(detail.variant ?? "none"))")
+                    defaultValue: "Get started"
+                ) { cta in
+                    DemoLog.append("pricing_cta → \(cta)")
                 }
             }
             .accessibilityIdentifier("flag-detail-button")
