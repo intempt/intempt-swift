@@ -46,7 +46,12 @@ final class Flush {
     private let db: IntemptDB
     private let network: Network
     private let credentials: IntemptCredentials
-    private let trackEndpoint: Endpoint
+    /// The endpoint every batch is posted to, carrying the geolocation flag as `?ip=`.
+    ///
+    /// Not private: the flag reaches the wire through this and nothing else, so a test asserting
+    /// on the instance property proves only that the property was set. Hardcoding the argument
+    /// that feeds this left all 311 tests green while every request carried `?ip=1`.
+    let trackEndpoint: Endpoint
     private let consentEndpoint: Endpoint
 
     /// Sole owner of `policy`, `inFlight` and `waiters`. Every private method

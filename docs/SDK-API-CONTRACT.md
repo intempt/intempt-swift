@@ -141,6 +141,10 @@ from the address the request arrives on. It defaults to **on**, matching what in
 assumes when the flag is absent, so an unset switch and an unpatched server agree. Every
 capture-class SDK MUST accept it: an SDK that ignores it ships a decorative opt-out.
 
+The value MUST be readable back after initialisation. An SDK whose initialise is idempotent
+returns the existing instance on a second call, so without a reader a caller has no way to
+find out which value is in force — Swift exposes `public let useIPAddressForGeolocation`.
+
 **An SDK whose initialise is idempotent MUST NOT silently discard this argument on a
 later call.** Returning a cached instance and dropping the flag fails in the
 privacy-unsafe direction, and "initialise at launch, initialise again after the consent

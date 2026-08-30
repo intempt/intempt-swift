@@ -71,6 +71,16 @@ final class IntemptInstanceTests: XCTestCase {
         XCTAssertTrue(on.useIPAddressForGeolocation)
         // Asserting the difference as well, so neither branch can be satisfied by a constant.
         XCTAssertNotEqual(off.useIPAddressForGeolocation, on.useIPAddressForGeolocation)
+
+        // And the WIRE, which is a separate forwarding argument. The property above and the
+        // Flush construction are fed independently; an earlier version of this test asserted
+        // only the property, so hardcoding the Flush argument left all 311 tests green while
+        // every request still carried `?ip=1`. The URL is the thing a customer's opt-out has
+        // to reach.
+        XCTAssertTrue(
+            off.flusher.trackEndpoint.path.contains("ip=0"),
+            "declining must reach the request URL, not just the instance property")
+        XCTAssertTrue(on.flusher.trackEndpoint.path.contains("ip=1"))
     }
 
     func testInitializeRejectsMalformedAPIKey() {
