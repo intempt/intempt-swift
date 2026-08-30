@@ -16,7 +16,7 @@ live here because the Swift SDK's shape is canonical, decided 2026-08-15.
 | Node | `intempt-node` | client surface only; see Server SDKs |
 | Python | `intempt-python` | client surface only; see Server SDKs |
 | PHP | `intempt-php` | client surface only; see Server SDKs |
-| JavaScript | `intemptjs` | out of scope, predates the contract |
+| JavaScript | `intemptjs` | **excluded — see [JavaScript is out of scope](#javascript-is-out-of-scope)** |
 
 Server SDKs conform on the shared capture surface — `track`, `identify`, `group`,
 `alias`, `consent`, `optIn` / `optOut` — and diverge structurally everywhere a server has
@@ -25,6 +25,80 @@ no device, session or per-user state. Those divergences are enumerated under
 
 A divergence that is *gratuitous* rather than structural is a bug, and belongs in an
 issue rather than in the table.
+
+## JavaScript is out of scope
+
+`intemptjs` predates this contract and is excluded from it deliberately. The reasons, so
+nobody reopens the question or "fixes" the SDK toward a shape it was never built for:
+
+1. **It ships a three-state consent model, not an opt-in/opt-out pair.** Its surface is
+   `accept` / `reject` with its own stored state, and its persistence is a cookie with a
+   localStorage fallback — deliberate, because an origin-scoped store alone loses an
+   opt-out across subdomains. Rewriting that as a two-state pair would change behaviour
+   for every site already using it.
+2. **It is the only SDK with autocapture of arbitrary page content.** The contract's
+   capture rules assume a caller naming an event; `intemptjs` also captures what a person
+   typed. That is a different privacy surface and needs its own rules, not these.
+3. **It has the largest installed base and no major-version break planned.** The other
+   SDKs adopted the contract at a clean break. This one has no such break scheduled, so
+   conformance would be a breaking change with no version to carry it.
+
+Excluded does not mean unowned. Its published documentation must describe the API it
+actually ships, and its opt-out must persist — both are tracked as requirements against
+`intemptjs` itself rather than against this contract.
+
+## Server SDKs
+
+Declared here because the Status table above marks the server SDKs "client surface only",
+which said what they are *not* without ever saying what they *are*. This section is what
+[the reference above](#server-sdks) points at.
+
+**Published server SDKs:** `intempt-node`, `intempt-python`, `intempt-php`.
+
+`intempt-java` is **not in the published set.** It has no publish workflow, so no consumer
+can depend on it, and it currently exposes flag reads only. It joins this table the day it
+publishes; until then a capability missing from it is not a conformance defect.
+
+### The shared server surface
+
+Every published server SDK exposes these, in the naming convention of its language:
+
+| Capability | Node / PHP | Python |
+|---|---|---|
+| Capture one event | `track` | `track` |
+| Capture many | `trackBatch` | `track_batch` |
+| Identify a person | `identify` | `identify` |
+| Associate an account | `group` | `group` |
+| Link two identities | `alias` | `alias` |
+| Opt in / opt out / status | `optIn` `optOut` `isOptedIn` | `opt_in` `opt_out` `is_opted_in` |
+| Read personalization | `recommend` | `recommend` |
+| Change configuration | `setConfig` `config` | `set_config` `config` |
+| Flush and shut down | `flush` `close` | `flush` `close` |
+
+### What a server SDK does NOT have
+
+No device, no session, no per-user state on the instance, therefore no automatic events,
+no autocapture, no screen tracking, and no anonymous-identity rotation. A server SDK is
+given the identity by its caller on every call. These absences are structural and must not
+be "fixed" into conformance.
+
+### Structural divergences that are permitted
+
+| Divergence | Where | Why it is allowed |
+|---|---|---|
+| Consent and ecommerce as separate objects rather than instance methods | PHP, Node | Namespacing is idiomatic in both; Python puts them on the client for the same reason |
+| Buffer inspection (`buffered`) | Python, PHP | Exposed where the language has no natural way to observe a queue otherwise |
+
+### Divergences that are NOT permitted
+
+A capability present in some published server SDKs and absent in others, where nothing
+about the language explains the gap, is a defect in the ones missing it. Two exist today
+and are open against the SDKs, not against this document:
+
+| Capability | Present in | Absent from |
+|---|---|---|
+| `trackLines` | PHP | Node, Python |
+| `transport` accessor | PHP, Node | Python |
 
 ## Why the Swift shape
 
