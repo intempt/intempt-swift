@@ -44,7 +44,14 @@ public final class IntemptInstance {
     ///   Leaving this on means the app collects **Coarse Location**, because the derived
     ///   country/region/city is stored. Apple's rule is that anything derived from data you send
     ///   off device counts separately from the data itself, so the app's own privacy label must say
-    ///   so. Setting it to `false` stops the derivation and there is nothing to declare.
+    ///   so. Setting it to `false` stops the derivation.
+    ///
+    ///   It does NOT change what this SDK's privacy manifest declares. `PrivacyInfo.xcprivacy`
+    ///   lists Coarse Location unconditionally, and Apple merges a dependency's manifest into the
+    ///   app's label whatever the app passes here — a manifest is static and cannot read a runtime
+    ///   argument. An app that sets `false` and expects the label to change will be surprised at
+    ///   review. Declaring a category the app may not exercise is the safe direction; claiming one
+    ///   it does exercise is not.
     ///
     /// - Throws: `IntemptError.malformedAPIKey` if the key is not
     ///   `prefix.secret`; `IntemptError.missingConfiguration` if any
@@ -130,9 +137,14 @@ public final class IntemptInstance {
     private let stateQueue: DispatchQueue
     private var optedOut = false
 
-    /// What this instance was initialised with. Kept so a later `initialize` asking for a
-    /// different value can say so rather than being silently ignored.
-    let useIPAddressForGeolocation: Bool
+    /// Whether this instance lets Intempt derive country, region and city from the address its
+    /// requests arrive on.
+    ///
+    /// `public` deliberately. `initialize` is idempotent, so a second call asking for a different
+    /// value keeps the first — and the logger is silent by default, which left an integrator with
+    /// no way at all to find out which value is in force. A privacy decision a caller cannot read
+    /// back is one they cannot verify.
+    public let useIPAddressForGeolocation: Bool
 
     private init(
         credentials: IntemptCredentials,

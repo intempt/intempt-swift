@@ -53,6 +53,26 @@ final class IntemptInstanceTests: XCTestCase {
             "the first value stands; a caller can see which one won")
     }
 
+    /// The wiring, not the enum. `?ip=0` appeared in exactly one assertion repo-wide — on the
+    /// bare `Endpoint` case — so both forwarding arguments inside `initialize` were untested:
+    /// hardcoding either to `true` left all 310 tests green while a customer's `false` was
+    /// silently ignored. That is the opt-out failing open, which is the direction that matters.
+    func testInitializeForwardsTheGeolocationChoiceToTheInstance() throws {
+        let off = try IntemptInstance.initialize(
+            apiKey: "pre.secret", orgId: "o", projectId: "p", sourceId: "s",
+            instanceName: "geo-off", useIPAddressForGeolocation: false)
+        let on = try IntemptInstance.initialize(
+            apiKey: "pre.secret", orgId: "o", projectId: "p", sourceId: "s",
+            instanceName: "geo-on", useIPAddressForGeolocation: true)
+
+        XCTAssertFalse(
+            off.useIPAddressForGeolocation,
+            "a customer asking to decline must reach the instance, not be defaulted back on")
+        XCTAssertTrue(on.useIPAddressForGeolocation)
+        // Asserting the difference as well, so neither branch can be satisfied by a constant.
+        XCTAssertNotEqual(off.useIPAddressForGeolocation, on.useIPAddressForGeolocation)
+    }
+
     func testInitializeRejectsMalformedAPIKey() {
         XCTAssertThrowsError(
             try IntemptInstance.initialize(
