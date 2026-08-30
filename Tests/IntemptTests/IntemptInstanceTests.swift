@@ -30,6 +30,29 @@ final class IntemptInstanceTests: XCTestCase {
 
     // MARK: - initialize
 
+    /// A second initialize with a different geolocation flag used to return the cached
+    /// instance with the old value, no throw and no log — so "initialise at launch,
+    /// initialise again after the consent banner" left collection on with no signal at all.
+    /// The instance still wins, deliberately, but the mismatch is now recorded and readable.
+    func testSecondInitializeKeepsTheFirstGeolocationChoiceAndIsInspectable() throws {
+        let first = try IntemptInstance.initialize(
+            apiKey: "pre.secret", orgId: "o", projectId: "p", sourceId: "s",
+            instanceName: "geo-cache", useIPAddressForGeolocation: true)
+        XCTAssertTrue(first.useIPAddressForGeolocation)
+
+        let second = try IntemptInstance.initialize(
+            apiKey: "pre.secret", orgId: "o", projectId: "p", sourceId: "s",
+            instanceName: "geo-cache", useIPAddressForGeolocation: false)
+
+        XCTAssertTrue(second === first, "initialize stays idempotent")
+        // The value a caller can read back must be the one actually in force, not the one
+        // they last asked for. Without the stored property this is unanswerable from outside,
+        // which is what made the silent drop invisible.
+        XCTAssertTrue(
+            second.useIPAddressForGeolocation,
+            "the first value stands; a caller can see which one won")
+    }
+
     func testInitializeRejectsMalformedAPIKey() {
         XCTAssertThrowsError(
             try IntemptInstance.initialize(

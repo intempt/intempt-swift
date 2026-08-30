@@ -47,11 +47,16 @@ Excluded does not mean unowned. Its published documentation must describe the AP
 actually ships, and its opt-out must persist — both are tracked as requirements against
 `intemptjs` itself rather than against this contract.
 
-## Server SDKs
+## The server SDK surface
 
-Declared here because the Status table above marks the server SDKs "client surface only",
-which said what they are *not* without ever saying what they *are*. This section is what
-[the reference above](#server-sdks) points at.
+The Status table marks the server SDKs "client surface only", which says what they are
+*not* without ever saying what they *are*. This section says what they are.
+
+It is deliberately **not** called "Server SDKs": [Accepted divergences](#accepted-divergences)
+already contains a `### Server SDKs` heading listing what a server SDK structurally lacks,
+and two headings of the same name would give one of them a `-1` anchor and silently
+retarget the existing link at the top of this document. The two are complements — that one
+records the absences, this one records the surface.
 
 **Published server SDKs:** `intempt-node`, `intempt-python`, `intempt-php`.
 
@@ -125,10 +130,21 @@ Android's deliberate removal was right and drafting from Swift had quietly overr
 ## Initialisation
 
 ```
-initialize(apiKey, orgId, projectId, sourceId, instanceName = "default") -> Instance
+initialize(apiKey, orgId, projectId, sourceId, instanceName = "default",
+           useIPAddressForGeolocation = true) -> Instance
 ```
 
 Throws on a malformed API key (not `prefix.secret`) and on any blank identifier.
+
+`useIPAddressForGeolocation` decides whether Intempt derives country, region and city
+from the address the request arrives on. It defaults to **on**, matching what ingestion
+assumes when the flag is absent, so an unset switch and an unpatched server agree. Every
+capture-class SDK MUST accept it: an SDK that ignores it ships a decorative opt-out.
+
+**An SDK whose initialise is idempotent MUST NOT silently discard this argument on a
+later call.** Returning a cached instance and dropping the flag fails in the
+privacy-unsafe direction, and "initialise at launch, initialise again after the consent
+banner" is the ordinary shape. Log it at minimum; a settable property is better.
 
 Credentials are passed at runtime. A platform MAY additionally support a config file —
 Android reads `assets/intempt-config.json` and that path is retained — but a file MUST

@@ -69,7 +69,22 @@ public final class IntemptInstance {
         AutomaticProperties.warm()
 
         return instancesLock.write {
-            if let existing = instances[instanceName] { return existing }
+            if let existing = instances[instanceName] {
+                // Idempotent by design, but the geolocation flag is a privacy decision and
+                // dropping it silently fails in the unsafe direction. "Initialise at launch,
+                // initialise again after the consent banner" is the ordinary shape, and it
+                // used to leave collection on with no signal of any kind.
+                if existing.useIPAddressForGeolocation != useIPAddressForGeolocation {
+                    IntemptLogger.shared.log(
+                        .warning,
+                        "initialize(instanceName: \(instanceName)) asked for "
+                            + "useIPAddressForGeolocation: \(useIPAddressForGeolocation) but that "
+                            + "instance already exists with "
+                            + "\(existing.useIPAddressForGeolocation). The existing value stands. "
+                            + "Pass it on the first initialize, or use a separate instanceName.")
+                }
+                return existing
+            }
             let created = IntemptInstance(
                 credentials: credentials, orgId: orgId, projectId: projectId,
                 sourceId: sourceId, instanceName: instanceName,
@@ -115,6 +130,10 @@ public final class IntemptInstance {
     private let stateQueue: DispatchQueue
     private var optedOut = false
 
+    /// What this instance was initialised with. Kept so a later `initialize` asking for a
+    /// different value can say so rather than being silently ignored.
+    let useIPAddressForGeolocation: Bool
+
     private init(
         credentials: IntemptCredentials,
         orgId: String,
@@ -127,6 +146,7 @@ public final class IntemptInstance {
         network: Network = Network()
     ) {
         self.credentials = credentials
+        self.useIPAddressForGeolocation = useIPAddressForGeolocation
         self.orgId = orgId
         self.projectId = projectId
         self.sourceId = sourceId
