@@ -194,13 +194,50 @@ final class Personalization {
     /// a payload the caller branches on.
     static let allowedDeviceClasses: Set<String> = ["all", "desktop", "mobile"]
 
-    static var deviceClass: String {
-        #if os(macOS)
+    /// The host platform as a VALUE rather than a `#if`.
+    ///
+    /// The mapping below used to live inside `#if os(macOS) / #else`, which
+    /// made it untestable: `swift test` runs on a macOS host, so the `#else`
+    /// arm was excluded from the build entirely and no assertion could reach
+    /// it. Flipping that arm's "mobile" to "tv" — the exact defect this SDK
+    /// shipped from tvOS — changed nothing any test could observe. Taking the
+    /// platform as a parameter compiles the whole table on every host, so the
+    /// tvOS answer is checkable from macOS.
+    enum HostPlatform: String, CaseIterable, Sendable {
+        case macOS
+        case iOS
+        case tvOS
+        case watchOS
+        /// Anything the package does not name, visionOS included. Read like a
+        /// phone, for the same reason tvOS is.
+        case other
+    }
+
+    /// Pure, total, and compiled on every platform — see `HostPlatform`.
+    static func deviceClass(for platform: HostPlatform) -> String {
+        switch platform {
+        case .macOS:
             return "desktop"
-        #else
+        case .iOS, .tvOS, .watchOS, .other:
             return "mobile"
+        }
+    }
+
+    static var hostPlatform: HostPlatform {
+        #if os(macOS)
+            return .macOS
+        #elseif os(tvOS)
+            return .tvOS
+        #elseif os(watchOS)
+            return .watchOS
+        #elseif os(iOS)
+            return .iOS
+        #else
+            return .other
         #endif
     }
+
+    static var deviceClass: String { deviceClass(for: hostPlatform) }
 
     static func string(_ value: Any?) -> String? {
         switch value {
