@@ -54,6 +54,14 @@ MUTANTS=(
 "Sources/Intempt/Network.swift|request.setValue(credentials.basicAuthHeader, forHTTPHeaderField: \"Authorization\")|request.setValue(credentials.basicAuthHeader, forHTTPHeaderField: \"X-Authorization\")|the Basic auth header is what authenticates every request; a renamed header is a 401 on everything"
 "Sources/Intempt/IdentityManager.swift|_sessionEventCount = 0|_sessionEventCount = 1|logOut must clear session state; a carried-over count attributes the previous user's activity to the next one"
 "Sources/Intempt/Flush.swift|db.read(.consents, limit: 1, flag: false)|db.read(.consents, limit: 1, flag: true)|consents drain from the unclaimed set; reading claimed rows means a withdrawal is never transmitted"
+# Flags. The whole evaluation path landed with 292 production lines and no mutant, in a repo
+# whose own TESTING.md calls this gate the real bar. Each of the four below is a defect this
+# SDK actually shipped or nearly shipped.
+"Sources/Intempt/Flags.swift|guard let value = raw.map(JSONValue.from), value != .null else { return nil }|guard let value = raw.map(JSONValue.from) else { return nil }|a JSON null body is ABSENT, not a served value; .some(.null) sails past the caller's ?? defaultValue and reaches a render as null"
+"Sources/Intempt/Flags.swift|if let names { body[\"names\"] = names }|body[\"names\"] = names ?? [String]()|allFlags OMITS names; sending an empty array filters the serving query to nothing and reads as \"no flags exist\""
+"Sources/Intempt/Flags.swift|if let sessionId, !sessionId.isEmpty { body[\"sessionId\"] = sessionId }|body[\"sessionId\"] = sessionId ?? \"\"|sessionId must be sent and must not be blank; ChooserHelper then stores \"default\" and ONCE_PER_VISIT degrades to once-ever-per-profile"
+"Sources/Intempt/Flags.swift|?? .unanswered))|?? .off))|an unanswered evaluation must not read as a deliberate off state (EXP-SERVE-001); off there is a wrong answer, not a missing one"
+"Sources/Intempt/Personalization.swift|return \"mobile\"|return \"tv\"|deviceClass must stay inside ExperienceDevice (all/desktop/mobile); \"tv\" is what this SDK actually sent from tvOS, and an unmappable value fails to bind the WHOLE request so every flag read silently returns the default"
 )
 
 restore() {

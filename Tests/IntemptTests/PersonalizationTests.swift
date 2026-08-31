@@ -288,11 +288,21 @@ final class PersonalizationTests: IntemptTestCase {
     func testDeviceClassIsPlatformAppropriate() {
         #if os(macOS)
             XCTAssertEqual(Personalization.deviceClass, "desktop")
-        #elseif os(tvOS)
-            XCTAssertEqual(Personalization.deviceClass, "tv")
         #else
+            // tvOS included, deliberately. It sent "tv" until 2026-08-31 and the server enum has
+            // no such member, so the request did not bind at all.
             XCTAssertEqual(Personalization.deviceClass, "mobile")
         #endif
+    }
+
+    func testDeviceClassStaysInsideTheServerEnum() {
+        // ExperienceDevice is all/desktop/mobile with @JsonValue and no @JsonCreator. A value
+        // outside it fails to deserialise the WHOLE choose-api request, so every flag read
+        // returns the caller's default with no error surface. This is the assertion that goes
+        // red if someone adds a platform arm returning "tv", "watch" or "vision".
+        XCTAssertTrue(
+            Personalization.allowedDeviceClasses.contains(Personalization.deviceClass),
+            "device \(Personalization.deviceClass) is not one of \(Personalization.allowedDeviceClasses)")
     }
 
     // MARK: - Number rendering

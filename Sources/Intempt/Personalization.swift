@@ -183,10 +183,19 @@ final class Personalization {
 
     /// The value the server's targeting rules expect. intemptjs sends
     /// "desktop"/"mobile"; a phone and a watch are both "mobile" to it.
+    ///
+    /// The vocabulary is CLOSED. `ExperienceDevice` in audience-service is
+    /// `all`/`desktop`/`mobile` with `@JsonValue` and no `@JsonCreator`, so any
+    /// other string fails to bind and takes the WHOLE request with it — every
+    /// flag read then returns the caller's default forever, silently, which is
+    /// indistinguishable from "no flags configured". tvOS used to send "tv" and
+    /// would have done exactly that on every Apple TV. It maps to "mobile"
+    /// because a TV app is read the same way a phone app is: no visual editor,
+    /// a payload the caller branches on.
+    static let allowedDeviceClasses: Set<String> = ["all", "desktop", "mobile"]
+
     static var deviceClass: String {
-        #if os(tvOS)
-            return "tv"
-        #elseif os(macOS)
+        #if os(macOS)
             return "desktop"
         #else
             return "mobile"

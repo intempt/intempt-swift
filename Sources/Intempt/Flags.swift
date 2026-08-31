@@ -18,11 +18,16 @@ import Foundation
 /// 4. Evaluation is REMOTE only. There is no local rule engine and no flag store to poll.
 
 /// Why an evaluation returned the value it did.
+///
+/// `unanswered` is SDK-local and never arrives on the wire. It exists because `EXP-SERVE-001`
+/// requires a caller to tell a deliberate off state from a request the service did not answer,
+/// and aliasing the two onto `.off` is exactly the collapse that requirement forbids.
 enum FlagReason: String, Sendable, Equatable {
     case targeted
     case holdout
     case notTargeted = "not_targeted"
     case off
+    case unanswered
 }
 
 /// Who is being evaluated.
@@ -57,9 +62,6 @@ struct FlagDetail: Sendable, Equatable {
 /// useful while the caller is deciding what to render.
 final class Flags {
 
-    /// A response the service did not answer is reported as such rather than guessed at.
-    static let unanswered: FlagReason = .off
-
     private let network: Network
     private let credentials: IntemptCredentials
     private let orgId: String
@@ -83,38 +85,55 @@ final class Flags {
     func detail(
         key: String,
         context: FlagContext,
+        sessionId: String?,
         completion: @escaping (FlagDetail?) -> Void
     ) {
         guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            // A programming error, not a runtime condition: nil tells the caller to use its
-            // default, and the precondition message names the mistake in a debug build.
+            // A programming error, not a runtime condition. `assertionFailure` is compiled out
+            // under -O, so this is a DEBUG-only signal: in a release build a blank key is
+            // silently the caller's default. That is deliberate — trapping a shipped app over a
+            // flag key is worse than the flag reading its default — and docs/CONVENTIONS.md says
+            // so rather than promising a throw the code does not make.
             assertionFailure("variation: key must not be empty")
             return completion(nil)
         }
 
-        choose(context: context, names: [key]) { choices in
+        choose(context: context, sessionId: sessionId, names: [key]) { choices in
             guard let choice = choices.first(where: { Flags.string($0["name"]) == key }) else {
                 return completion(nil)
             }
             completion(
                 FlagDetail(
-                    // A JSON null body is ABSENT, not a served value. `.map` alone produces
-                    // `.some(.null)`, and `?? defaultValue` upstream does not fire on that — so a
-                    // null body reached the caller as JSONValue.null instead of the default they
-                    // supplied. Every other SDK in this effort treats null as absent; this one
-                    // did not, and no test had ever exercised the path.
-                    value: choice["body"].map(JSONValue.from).flatMap { $0 == .null ? nil : $0 },
+                    value: Flags.servedValue(choice["body"]),
                     reason: FlagReason(rawValue: Flags.string(choice["reason"]) ?? "")
-                        ?? Flags.unanswered))
+                        ?? .unanswered))
         }
     }
 
-    func all(context: FlagContext, completion: @escaping ([String: JSONValue]) -> Void) {
-        choose(context: context, names: nil) { choices in
+    /// Every key this person qualifies for.
+    ///
+    /// HAZARD, and it is a server-side one: `ExperienceChooserService.chooseApi` records a
+    /// display for EVERY experience it retrieves, before variant choice. For an experience
+    /// configured `ONCE`, a single `all()` therefore burns the once-only display for every
+    /// qualifying experience at once — including ones the app never renders — and a later
+    /// `detail(key:)` for such a key drops out of `choices` and resolves to the caller's
+    /// default, permanently and indistinguishably from "not enrolled". It also inflates the
+    /// exposure counts `EXP-SERVE-003` makes load-bearing for results. A non-recording read
+    /// mode is an audience-service change; until it exists, prefer `detail(key:)` per key on
+    /// any project that uses `ONCE`.
+    func all(
+        context: FlagContext,
+        sessionId: String?,
+        completion: @escaping ([String: JSONValue]) -> Void
+    ) {
+        choose(context: context, sessionId: sessionId, names: nil) { choices in
             var out: [String: JSONValue] = [:]
             for choice in choices {
                 guard let name = Flags.string(choice["name"]), !name.isEmpty else { continue }
-                out[name] = choice["body"].map(JSONValue.from) ?? .null
+                // Same rule as `detail`, and the same function, so the two cannot drift again:
+                // the pair reported different answers for one key until this shared a body.
+                guard let value = Flags.servedValue(choice["body"]) else { continue }
+                out[name] = value
             }
             completion(out)
         }
@@ -128,6 +147,7 @@ final class Flags {
     /// which is the opposite of what a kill switch is for.
     private func choose(
         context: FlagContext,
+        sessionId: String?,
         names: [String]?,
         completion: @escaping ([[String: Any]]) -> Void
     ) {
@@ -141,6 +161,11 @@ final class Flags {
             "identification": identification,
             "device": Personalization.deviceClass,
         ]
+        // Without it `ChooserHelper.allowOncePerSession` stores the literal "default" and every
+        // later call fails its `sessionId != null` clause, so a ONCE_PER_VISIT experience is
+        // served once EVER per profile rather than once per visit. It also stamps every Kafka
+        // `ExperienceChoose` with "default", which makes session-level analysis unattributable.
+        if let sessionId, !sessionId.isEmpty { body["sessionId"] = sessionId }
         if let names { body["names"] = names }
 
         let request: URLRequest
@@ -164,6 +189,18 @@ final class Flags {
             }
             completion(choices)
         }
+    }
+
+    /// A JSON null body is ABSENT, not a served value.
+    ///
+    /// `.map` alone produces `.some(.null)`, and `?? defaultValue` upstream does not fire on that,
+    /// so a null body reached the caller as `JSONValue.null` instead of the default they supplied.
+    /// Every other SDK in this effort treats null as absent; this one did not, and no test had
+    /// ever exercised the path. `detail` and `all` share this so they cannot answer differently
+    /// about one key — they did, until 2026-08-31.
+    static func servedValue(_ raw: Any?) -> JSONValue? {
+        guard let value = raw.map(JSONValue.from), value != .null else { return nil }
+        return value
     }
 
     static func string(_ value: Any?) -> String? {

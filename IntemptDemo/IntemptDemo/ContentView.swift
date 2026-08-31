@@ -25,7 +25,7 @@ struct ContentView: View {
                 trackingSection
                 commerceSection
                 flagsSection
-            personalizationSection
+                personalizationSection
                 privacySection
                 deliverySection
                 autocaptureSection
@@ -145,7 +145,7 @@ struct ContentView: View {
                     DemoLog.append("pricing_cta → \(cta)")
                 }
             }
-            .accessibilityIdentifier("flag-detail-button")
+            .accessibilityIdentifier("flag-string-button")
 
             Button("Read every flag") {
                 intempt?.allFlags { values in

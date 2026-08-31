@@ -8,7 +8,12 @@ import XCTest
 /// the service is unreachable, not on the happy path.
 final class FlagsTests: XCTestCase {
 
-    // MARK: reason vocabulary — published to four package registries, so it cannot drift
+    // MARK: reason vocabulary
+    //
+    // NOT because it is published — `FlagReason` has no `public` modifier and is on no shipped
+    // surface. It is asserted because these strings are the WIRE vocabulary shared with
+    // intempt-java (`TARGETED("targeted")`, `HOLDOUT("holdout")`, `NOT_TARGETED("not_targeted")`),
+    // and a raw value edited to match the Swift case name would silently stop matching the server.
 
     func testReasonWireValues() {
         XCTAssertEqual(FlagReason.targeted.rawValue, "targeted")
@@ -18,37 +23,30 @@ final class FlagsTests: XCTestCase {
         XCTAssertEqual(FlagReason.notTargeted.rawValue, "not_targeted")
     }
 
-    func testOffIsDistinguishableFromNotTargeted() {
-        // A stopped experience and a person outside the audience are different answers. Collapsing
-        // them is the ambiguity this whole surface exists to remove.
-        XCTAssertNotEqual(FlagReason.off, FlagReason.notTargeted)
+    func testUnansweredIsNotOff() {
+        // EXP-SERVE-001: a caller must be able to tell a deliberate off state from a request the
+        // service did not answer. This SDK aliased `unanswered` onto `.off` until 2026-08-31,
+        // which is the collapse the requirement forbids. Deleting `case unanswered` restores the
+        // alias and this goes red.
+        XCTAssertNotEqual(FlagReason.unanswered, FlagReason.off)
+        XCTAssertNotEqual(FlagReason.unanswered, FlagReason.notTargeted)
     }
 
-    func testAnUnknownReasonFallsBackRatherThanCrashing() {
-        // A reason added server-side that this SDK version predates must not trap.
-        XCTAssertNil(FlagReason(rawValue: "invented_later"))
-    }
-
-    // MARK: context
-
-    func testContextCarriesTheIdentifierThatSurvivesSignIn() {
-        // profileId is present before and after sign-in; userId only appears at it. Deriving on
-        // userId re-buckets a visitor mid-session.
-        let context = FlagContext(userId: "u-1", profileId: "p-1")
-        XCTAssertEqual(context.profileId, "p-1")
-        XCTAssertEqual(context.userId, "u-1")
-
-        let anonymous = FlagContext(profileId: "p-1")
-        XCTAssertNil(anonymous.userId)
-        XCTAssertEqual(anonymous.profileId, "p-1")
-    }
-
-    // The two FlagDetail tests that were here are deleted rather than adapted. Each built a
-    // FlagDetail and asserted it held what had just been put in it -- a memberwise initialiser
-    // storing its arguments, which is a property of the language and cannot fail. Neither could
-    // ever have gone red, and `variant` being wrong all along is what they failed to catch.
+    // Three tests that used to sit here are gone, for the reason the deleted FlagDetail pair went:
+    // each asserted something the language guarantees, so none had a failing state.
     //
-    // FlagDetail is internal now anyway: it carries a reason the platform does not send, so
+    //   testOffIsDistinguishableFromNotTargeted   two distinct cases of a synthesized-Equatable
+    //                                             enum; deleting a case would not compile
+    //   testAnUnknownReasonFallsBackRatherThanCrashing
+    //                                             Swift's synthesized init?(rawValue:)
+    //   testContextCarriesTheIdentifierThatSurvivesSignIn
+    //                                             a memberwise-init round trip
+    //
+    // What each was reaching for is asserted for real below, against the evaluation path:
+    // `testAnUnknownReasonResolvesToUnanswered` and
+    // `testTheDefaultContextDerivesOnProfileIdNotUserId`.
+    //
+    // FlagDetail stays internal: it carries a reason the platform does not send, so
     // variationDetail is not exposed until the serving contract carries one.
 }
 
@@ -81,10 +79,26 @@ final class FlagsDetailTests: XCTestCase {
         return (f, session)
     }
 
-    private func detail(_ f: Flags, _ key: String) -> FlagDetail? {
+    private func detail(
+        _ f: Flags,
+        _ key: String,
+        context: FlagContext = FlagContext(userId: "u-1"),
+        sessionId: String? = "s-1"
+    ) -> FlagDetail? {
         let done = expectation(description: "detail")
         var out: FlagDetail?
-        f.detail(key: key, context: FlagContext(userId: "u-1")) {
+        f.detail(key: key, context: context, sessionId: sessionId) {
+            out = $0
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 2)
+        return out
+    }
+
+    private func all(_ f: Flags) -> [String: JSONValue] {
+        let done = expectation(description: "all")
+        var out: [String: JSONValue] = [:]
+        f.all(context: FlagContext(userId: "u-1"), sessionId: "s-1") {
             out = $0
             done.fulfill()
         }
@@ -132,21 +146,70 @@ final class FlagsDetailTests: XCTestCase {
         XCTAssertNil(detail(f, "k"))
     }
 
+    func testAnUnknownReasonResolvesToUnanswered() {
+        // A reason this SDK version predates must not trap AND must not read as a deliberate
+        // off state. Both halves matter: `off` here is a wrong answer, not a missing one.
+        let (f, _) = flags([
+            .json(200, #"{"choices":[{"name":"k","body":true,"reason":"invented_later"}]}"#)
+        ])
+        XCTAssertEqual(detail(f, "k")?.reason, .unanswered)
+    }
+
+    func testTheDefaultContextDerivesOnProfileIdNotUserId() {
+        // EXP-ASSIGN-005: the value must not change when someone signs in. profileId is present
+        // on both sides of that transition; userId appears at it. A context carrying only
+        // profileId must not smuggle a userId onto the wire, because the server segments on
+        // EntityType.USER when userId is present and EntityType.PROFILE otherwise — two
+        // different entities, so the person re-buckets.
+        let (f, session) = flags([.json(200, #"{"choices":[]}"#)])
+        _ = detail(f, "k", context: FlagContext(profileId: "p-1"))
+        let identification = session.bodies.first?["identification"] as? [String: Any]
+        XCTAssertEqual(identification?["profileId"] as? String, "p-1")
+        XCTAssertNil(identification?["userId"])
+    }
+
     func testTheRequestNamesTheKeyAndCarriesTheIdentifier() {
         let (f, session) = flags([.json(200, #"{"choices":[]}"#)])
         _ = detail(f, "checkout_v2")
         let body = session.bodies.first
         XCTAssertEqual(body?["names"] as? [String], ["checkout_v2"])
         XCTAssertEqual((body?["identification"] as? [String: Any])?["userId"] as? String, "u-1")
+        // `device` must stay inside ExperienceDevice (all/desktop/mobile). Anything else fails to
+        // bind server-side and the entire request is rejected, silently.
+        let device = body?["device"] as? String
+        XCTAssertNotNil(device)
+        XCTAssertTrue(
+            Personalization.allowedDeviceClasses.contains(device ?? ""),
+            "device \(device ?? "nil") is outside ExperienceDevice")
+        // Without sessionId, ChooserHelper stores "default" and ONCE_PER_VISIT degrades to
+        // once-ever-per-profile.
+        XCTAssertEqual(body?["sessionId"] as? String, "s-1")
+    }
+
+    func testABlankSessionIdIsOmittedRatherThanSentEmpty() {
+        let (f, session) = flags([.json(200, #"{"choices":[]}"#)])
+        _ = detail(f, "k", sessionId: "")
+        XCTAssertNil(session.bodies.first?["sessionId"])
     }
 
     func testAllFlagsAsksForEveryKeyRatherThanNamingOne() {
         // `names` absent is what makes the serving query return everything; sending an empty
         // array instead would filter to nothing and look like "no flags exist".
         let (f, session) = flags([.json(200, #"{"choices":[]}"#)])
-        let done = expectation(description: "all")
-        f.all(context: FlagContext(userId: "u-1")) { _ in done.fulfill() }
-        wait(for: [done], timeout: 2)
+        _ = all(f)
         XCTAssertNil(session.bodies.first?["names"])
+    }
+
+    func testAllFlagsOmitsANullBodyRatherThanReportingItAsAValue() {
+        // detail() flattens a JSON null to absent; all() returned `.null` for the same key, so
+        // the two public methods disagreed about one flag. A caller enumerating allFlags() saw a
+        // key it could not use, while variation(key:) for that key gave it the default.
+        let (f, _) = flags([
+            .json(200, #"{"choices":[{"name":"served","body":true},{"name":"empty","body":null}]}"#)
+        ])
+        let values = all(f)
+        XCTAssertEqual(values["served"], .bool(true))
+        XCTAssertNil(values["empty"])
+        XCTAssertEqual(values.count, 1)
     }
 }

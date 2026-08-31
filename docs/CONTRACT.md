@@ -69,32 +69,60 @@ Returns **200**.
 
 ## `POST /{org}/projects/{project}/optimization/choose-api`
 
-Body — note the nested `identification` object. The JS SDK's
-`ChoicesRequestModel` is the authority here; there is no `optimizationType`
-discriminator and no `names` array, which an earlier draft of our plan assumed.
+Body — note the nested `identification` object. The authority is
+`ExperienceApiChooseRequest.java` in `audience-service`, read at `origin/main`
+= `97fa27d`, not the JS SDK's `ChoicesRequestModel`. There is no
+`optimizationType` discriminator: that field is dead on the wire and nothing
+reads it.
 
 ```json
 {
-  "identification": {"sourceId":"…","profileId":"…"},
-  "url": "…",          // optional
-  "device": "…",       // optional
+  "identification": {"sourceId":"…","profileId":"…","userId":"…"},
+  "names":     ["…"],  // optional — filters to these selector names
+  "groups":    ["…"],  // optional — filters to these selector groups
+  "device":    "…",    // optional — all | desktop | mobile, and NOTHING else
   "sessionId": "…",    // optional
-  "productId": null    // optional
+  "productId": "…",    // optional
+  "timestamp": 0       // optional
 }
 ```
 
-Returns **200** with:
+`names` **exists and is a first-class filter.** This document said it did not
+until 2026-08-31, and that sentence cost a reviewer a false CRITICAL against
+another SDK's flag surface, which the reviewer believed could never work.
+`ExperienceChooserService.chooseApi` passes it straight into
+`experienceService.retrieveApiExperiences(request.getGroups(),
+request.getNames(), …)`. Omitting `names` returns every experience the person
+qualifies for, which is what a bulk `allFlags()` read is.
+
+`device` deserialises into the `ExperienceDevice` enum, whose only members are
+`all`, `desktop` and `mobile`. It carries `@JsonValue` and no `@JsonCreator`,
+and `application.yml` sets `accept-case-insensitive-enums: true` — which fixes
+CASE, not vocabulary. Any other string fails to bind and takes the whole
+request with it, so every flag read returns the caller's default, silently.
+
+Returns **200** with `ExperienceApiChooseResponse{ List<ExperienceApiChoose> }`,
+where each choice is `{name, group, body}` and `body` is an arbitrary JSON node:
 
 ```json
-{"choices":[{"target":"…","changes":[…],"variant":"8458","updatedAt":1780479018724,"experience":"8038"}]}
+{"choices":[{"name":"new_checkout","group":"banner","body":true}]}
 ```
 
-`identification` alone is sufficient — a request with no `url`, `device` or
+There is **no `reason` field**, and no `variant`, `target`, `changes`,
+`updatedAt` or `experience`. `git grep -n reason` over
+`audience-service/src/main/java/com/intempt/cdp/audience/experience/` returns
+0. The shape with `target`/`changes`/`variant` documented here until
+2026-08-31 was **choose-web's**, printed under a `choose-api` heading directly
+above the paragraph insisting the two are not interchangeable.
+
+`identification` alone is sufficient — a request with no `names`, `device` or
 `sessionId` still returns 200. Omitting `identification` returns **400**
 `{"errors":[{"message":"Identification is required"}]}`.
 
 `choose-api` is the native endpoint; `choose-web` is the browser one. They are
 separate registrations on the same service and are **not** interchangeable.
+A body or a response shape copied from one into the other is the recurring
+mistake, and the two corrections above are both instances of it.
 
 ## `POST /{org}/projects/{project}/feeds/{feedId}/data`
 

@@ -3,6 +3,50 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Feature flags, experiments and personalizations, read by key.** `variation`,
+  `allFlags`, the four typed helpers (`boolVariation`, `stringVariation`,
+  `numberVariation`, `jsonVariation`), `waitForInitialization` and
+  `FlagContext`. Eight new public symbols, against
+  `POST /{org}/projects/{project}/optimization/choose-api`. `defaultValue` is
+  required everywhere: a network failure, a timeout, an unknown key or a
+  malformed response all resolve to it rather than throwing. Evaluation is
+  remote only — the server buckets, and `scripts/check-no-local-bucketing.mjs`
+  fails the build on a second derivation.
+- **`variationDetail` is deliberately WITHHELD** and stays internal until the
+  serving response carries a `reason`. `ExperienceApiChoose` is
+  `{name, group, body}` today, so every reason the method could return would
+  read `off` — including for someone targeted and served. The conformance gate
+  now enforces the absence rather than a comment describing it.
+- **`docs/CONVENTIONS.md` and `docs/TESTING.md`**, and a CI job asserting bucket
+  derivation stays server-only (`EXP-ASSIGN-004`, `EXP-ASSIGN-005`).
+
+### Fixed
+
+- **A JSON null body reached the caller as `JSONValue.null` instead of their
+  default.** `.map` alone produces `.some(.null)`, which sails past `??`.
+  `variation` and `allFlags` now share one `servedValue` helper so they cannot
+  answer differently about the same key — they did, for one revision.
+- **tvOS sent `device: "tv"`, which the service cannot deserialise.**
+  `ExperienceDevice` is `all`/`desktop`/`mobile` with no `@JsonCreator`, so the
+  whole request failed to bind and every flag read on tvOS returned the caller's
+  default, silently. tvOS now reports `mobile`.
+- **`sessionId` was never sent.** Without it `ChooserHelper` stores the literal
+  `"default"`, so a `ONCE_PER_VISIT` experience was served once ever per profile
+  rather than once per visit, and every Kafka `ExperienceChoose` from iOS was
+  stamped `"default"`.
+- **An unanswered evaluation reported `off`.** `EXP-SERVE-001` requires a caller
+  to tell a deliberate off state from a request the service did not answer;
+  `Flags.unanswered` aliased the two. `FlagReason` now carries a distinct,
+  SDK-local `unanswered`.
+- **`docs/CONTRACT.md` was wrong about `choose-api` in two ways** — it said the
+  endpoint has no `names` array (it does, and it is the filter this whole
+  surface depends on) and printed `choose-web`'s 200 body under a `choose-api`
+  heading. Both cost an earlier reviewer a false CRITICAL against another SDK.
+
 ## [0.1.1] — 2026-08-18
 
 ### Added
