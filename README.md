@@ -128,16 +128,68 @@ and needs no `productId`; a product-input feed returns an empty list until you
 pass one. Both answer `200`, so asking the wrong kind looks like a profile with
 no recommendations rather than a mistake.
 
-> **No experiments.** Experiment and personalization assignment is not part of
-> this SDK. There is no server-side support for it on mobile today: the endpoint
-> answers `200` with an empty set because there is nothing to configure behind
-> it. Recommendation feeds are a different capability against a different
-> endpoint and are unaffected.
-
 `products` defaults `fields:` to `Intempt.defaultFeedFields` deliberately. An
 unfielded request returns every catalog column including raw ML embedding
 vectors — measured at **443x** the payload. Widen it on purpose, never by
 omission.
+
+### Feature flags, experiments and personalizations
+
+Read a value by KEY. Whether the key names an experiment, a personalization or a
+feature flag is the platform's business — its serving query filters on channel
+and status, never on mode — so the call does not change when the mode does.
+
+```swift
+intempt.boolVariation(key: "new_checkout", defaultValue: false) { on in
+    on ? showNewCheckout() : showOldCheckout()
+}
+
+intempt.stringVariation(key: "pricing_cta", defaultValue: "Get started") { cta in
+    button.setTitle(cta, for: .normal)
+}
+
+intempt.numberVariation(key: "results_per_page", defaultValue: 20) { n in … }
+intempt.jsonVariation(key: "onboarding", defaultValue: [:]) { config in … }
+
+// The untyped form, if you want the raw JSONValue.
+intempt.variation(key: "new_checkout", defaultValue: .bool(false)) { value in … }
+```
+
+`defaultValue` is **required**, and that is the whole design. It is what you get
+on a network failure, a timeout, an unknown key or a malformed response. An SDK
+that throws when Intempt is unreachable takes your app down with it, which is
+the opposite of what a kill switch is for. A served value of the wrong type
+falls back to your default too — a flag configured as a string and read as a
+bool returns your default, never `true`.
+
+Every key at once:
+
+```swift
+intempt.allFlags { values in … }   // [String: JSONValue]
+```
+
+One request instead of N, and that is the cost as well as the point: the service
+records a display for every experience it returns, so on a project using the
+`ONCE` display mode this consumes the once-only display for keys your app never
+renders. Prefer the per-key call where that matters.
+
+```swift
+intempt.waitForInitialization { … }   // calls back immediately
+```
+
+Present so a call site ported from an SDK that polls a local flag store compiles
+unchanged. Evaluation here is remote — every `variation` is a request — so there
+is no local state to wait for and `timeoutMs` is accepted and ignored.
+
+**No local evaluation, and no `variationDetail`.** The server buckets, so no
+second implementation can disagree with it. `variationDetail` would carry a
+`reason` the serving response does not send yet, so it would report `off` for
+someone who was in fact targeted and served — a wrong answer, not a missing one.
+It becomes public in the same release that adds `reason` to the wire.
+
+Assignment is derived from `profileId` by default, because that identifier is
+present before and after someone signs in — deriving on `userId` re-buckets them
+mid-session. Pass `FlagContext(...)` to override it.
 
 ### Consent
 

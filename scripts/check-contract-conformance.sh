@@ -26,6 +26,9 @@ INSTANCE_METHODS=(
     flush
     products
     setPushToken trackPushOpen trackPushReceived
+    variation allFlags
+    boolVariation stringVariation numberVariation jsonVariation
+    waitForInitialization
 )
 
 AUTOCAPTURE_MEMBERS=(configure start stop isRunning)
@@ -33,11 +36,15 @@ AUTOCAPTURE_MEMBERS=(configure start stop isRunning)
 TYPES=(
     IntemptInstance AutocaptureOptions AutomaticEventOptions
     ConsentAction ProductRecommendation IntemptType IntemptError
+    FlagContext
 )
 
 # Removed capabilities must STAY removed. Without this the check only guards
 # against deletion, and a well-meaning re-add would pass.
-FORBIDDEN=(experiments ExperimentChoice OptimizationType)
+# `variationDetail` and `FlagDetail` are WITHHELD, not missing: they would carry a reason the
+# serving response does not send, so every reason would read `off` including for someone who was
+# targeted and served. That decision was a comment until this line; now it is a gate.
+FORBIDDEN=(experiments ExperimentChoice OptimizationType variationDetail FlagDetail)
 
 echo "contract conformance"
 
