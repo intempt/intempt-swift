@@ -43,42 +43,47 @@ struct ContentView: View {
     private var trackingSection: some View {
         Section("Tracking") {
             Button("Track event") {
-                let ok = intempt?.track(
-                    eventTitle: "Demo Button Tapped",
-                    data: ["screen": "ContentView", "at": Date()]) ?? false
+                let ok =
+                    intempt?.track(
+                        eventTitle: "Demo Button Tapped",
+                        data: ["screen": "ContentView", "at": Date()]) ?? false
                 DemoLog.append("track → \(ok)")
             }
             .accessibilityIdentifier("track-button")
 
             Button("Identify user") {
-                let ok = intempt?.identify(
-                    userId: "demo@intempt.com",
-                    userAttributes: ["plan": "pro", "seats": 3]) ?? false
+                let ok =
+                    intempt?.identify(
+                        userId: "demo@intempt.com",
+                        userAttributes: ["plan": "pro", "seats": 3]) ?? false
                 DemoLog.append("identify → \(ok)")
             }
             .accessibilityIdentifier("identify-button")
 
             Button("Set account") {
-                let ok = intempt?.group(
-                    accountId: "demo-account",
-                    accountAttributes: ["tier": "enterprise"]) ?? false
+                let ok =
+                    intempt?.group(
+                        accountId: "demo-account",
+                        accountAttributes: ["tier": "enterprise"]) ?? false
                 DemoLog.append("group → \(ok)")
             }
             .accessibilityIdentifier("group-button")
 
             Button("Record (user + account)") {
-                let ok = intempt?.record(
-                    eventTitle: "Demo Signup",
-                    userId: "demo@intempt.com",
-                    accountId: "demo-account",
-                    data: ["source": "demo-app"]) ?? false
+                let ok =
+                    intempt?.record(
+                        eventTitle: "Demo Signup",
+                        userId: "demo@intempt.com",
+                        accountId: "demo-account",
+                        data: ["source": "demo-app"]) ?? false
                 DemoLog.append("record → \(ok)")
             }
             .accessibilityIdentifier("record-button")
 
             Button("Alias") {
-                let ok = intempt?.alias(
-                    userId: "demo@intempt.com", anotherUserId: "demo-alias") ?? false
+                let ok =
+                    intempt?.alias(
+                        userId: "demo@intempt.com", anotherUserId: "demo-alias") ?? false
                 DemoLog.append("alias → \(ok)")
             }
             .accessibilityIdentifier("alias-button")
@@ -86,8 +91,9 @@ struct ContentView: View {
             // Proves the SDK refuses a value that cannot survive JSON rather
             // than shipping the string "nan", which is what upstream does.
             Button("Track invalid (NaN)") {
-                let ok = intempt?.track(
-                    eventTitle: "Demo Invalid", data: ["bad": Double.nan]) ?? false
+                let ok =
+                    intempt?.track(
+                        eventTitle: "Demo Invalid", data: ["bad": Double.nan]) ?? false
                 DemoLog.append("track NaN → \(ok) (false is correct)")
             }
             .accessibilityIdentifier("invalid-button")
