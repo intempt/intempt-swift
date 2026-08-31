@@ -3,7 +3,11 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] — 2026-08-31
+
+A **minor** bump, not a patch: eleven new public declarations. The podspec sat at `0.1.1`
+while CocoaPods trunk served only `0.1.0`, so `0.1.1` was never released and the surface
+below would otherwise have shipped inside a patch version.
 
 ### Added
 
@@ -42,6 +46,25 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to tell a deliberate off state from a request the service did not answer;
   `Flags.unanswered` aliased the two. `FlagReason` now carries a distinct,
   SDK-local `unanswered`.
+- **A flag key the service refuses was sent anyway.**
+  `ExperienceApiChooseRequest.names` is validated against `^[a-zA-Z0-9_-]*$` by
+  `HandlerUtils.requestToMono`, so `variation("checkout.new")` spent a round trip
+  to be refused and the caller could not tell that refusal from "no flag is
+  configured" — both arrive as the default. `Flags.isValidKey` now rejects it
+  locally. Deliberately not an `assertionFailure`: a dotted key is a naming
+  mistake, not a structural bug, and aborting a debug build over one is worse
+  than reading the default.
+- **`scripts/check-no-local-bucketing.mjs` passed while scanning nothing.**
+  `GUARD_SRC` defaulted to `src`, which no Swift package has, and a missing root
+  yielded silently — so run without CI's environment the guard reported OK on a
+  real breach. It now fails on a missing or empty root, defaults to this repo's
+  own directories, and prints the file count it actually read. This was finding
+  F1 of the `intempt-android` review, fixed there and not carried across; the
+  script is vendored into every Intempt SDK, so the same hole exists wherever it
+  landed with an empty allowlist.
+- **`IntemptDemo` was outside the format gate.** `swift format lint` covered
+  `Sources` and `Tests` only, which is why an indentation regression in the demo
+  — the file an evaluator copies from — could go green.
 - **`docs/CONTRACT.md` was wrong about `choose-api` in two ways** — it said the
   endpoint has no `names` array (it does, and it is the filter this whole
   surface depends on) and printed `choose-web`'s 200 body under a `choose-api`

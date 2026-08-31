@@ -29,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = process.env.GUARD_ROOT ?? join(here, '..');
-const roots = (process.env.GUARD_SRC ?? 'src').split(',').map((d) => d.trim()).filter(Boolean);
+const roots = (process.env.GUARD_SRC ?? 'Sources,Tests,IntemptDemo').split(',').map((d) => d.trim()).filter(Boolean);
 const allowPath = join(here, 'no-local-bucketing-allow.json');
 
 const SOURCE = /\.(ts|tsx|js|mjs|cjs|py|php|kt|java|swift)$/;
@@ -65,8 +65,13 @@ const allow = existsSync(allowPath) ? JSON.parse(readFileSync(allowPath, 'utf8')
 const seen = new Set();
 const hits = [];
 
+const missingRoots = roots.filter((r) => !existsSync(join(root, r)));
+let scanned = 0;
+
 for (const r of roots) {
-  for (const file of walk(join(root, r))) {
+  const files = walk(join(root, r));
+  scanned += files.length;
+  for (const file of files) {
     const rel = relative(root, file);
     readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
       if (/^\s*(\/\/|#|\*|--)/.test(line)) return; // a comment explaining the rule is not a breach
@@ -82,6 +87,21 @@ for (const r of roots) {
 }
 
 const problems = [];
+
+// A guard that scans nothing prints OK, and the green tick is then read as evidence that no SDK
+// derives buckets locally. That is strictly worse than having no guard at all. This script is
+// copied into every Intempt SDK, so the default above is right for exactly one of them and a
+// wrong GUARD_SRC must be loud rather than silent.
+if (missingRoots.length) {
+  problems.push(
+    `configured root(s) do not exist: ${missingRoots.join(', ')} — nothing under them was ` +
+      `scanned. Set GUARD_SRC to this repo's source directories.`
+  );
+}
+if (!missingRoots.length && scanned === 0) {
+  problems.push(`scanned 0 source files under ${roots.join(', ')} — nothing was checked`);
+}
+
 if (hits.length) {
   problems.push(
     `bucket derivation must be server-only (EXP-ASSIGN-004, EXP-ASSIGN-005) — ` +
@@ -107,5 +127,6 @@ if (problems.length) {
   process.exit(1);
 }
 console.log(
-  `no-local-bucketing OK — scanned ${roots.join(', ')}, ${Object.keys(allow).length} documented allowance(s)`
+  `no-local-bucketing OK — ${scanned} file(s) scanned under ${roots.join(', ')}, ` +
+    `${Object.keys(allow).length} documented allowance(s)`
 );

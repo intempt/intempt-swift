@@ -82,6 +82,29 @@ final class Flags {
         self.sourceId = sourceId
     }
 
+    /// The characters the SERVER accepts in a flag key.
+    ///
+    /// `ExperienceApiChooseRequest.names` is `Set<@Pattern(regexp: "^[a-zA-Z0-9_-]*$") String>`,
+    /// and `HandlerUtils.requestToMono` runs a real validator over every request body — it builds
+    /// a `Validator` and throws `IntemptException` on any violation — so a key outside this set is
+    /// refused before a single experience is looked up. Verified against `audience-service`
+    /// `origin/main` @ `97fa27d`.
+    ///
+    /// Checking it here costs nothing and buys the one thing the wire cannot give back: without
+    /// it the SDK spends a round trip to be told no, and the caller cannot distinguish that
+    /// refusal from "no flag is configured" — both arrive as the default. It is the same
+    /// indistinguishability that let the tvOS `device: "tv"` defect ship unnoticed.
+    static let allowedKeyCharacters = CharacterSet(
+        charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+
+    /// Pure and total, so it is checkable without a transport.
+    ///
+    /// Stricter than the server's regex in one place: `*` there admits the empty string, which can
+    /// only ever be a mistake, so it is rejected here.
+    static func isValidKey(_ key: String) -> Bool {
+        !key.isEmpty && key.unicodeScalars.allSatisfy(allowedKeyCharacters.contains)
+    }
+
     func detail(
         key: String,
         context: FlagContext,
@@ -95,6 +118,14 @@ final class Flags {
             // flag key is worse than the flag reading its default — and docs/CONVENTIONS.md says
             // so rather than promising a throw the code does not make.
             assertionFailure("variation: key must not be empty")
+            return completion(nil)
+        }
+
+        guard Flags.isValidKey(key) else {
+            // Deliberately NOT an assertionFailure. An empty key is structural and the guard
+            // above traps it in DEBUG; a dotted or spaced key is a realistic naming mistake, and
+            // aborting someone's debug build over one is worse than the flag reading its default.
+            // The service refuses it either way, so this skips a round trip that could only fail.
             return completion(nil)
         }
 

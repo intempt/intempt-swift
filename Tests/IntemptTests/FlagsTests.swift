@@ -48,6 +48,34 @@ final class FlagsTests: XCTestCase {
     //
     // FlagDetail stays internal: it carries a reason the platform does not send, so
     // variationDetail is not exposed until the serving contract carries one.
+
+    // MARK: key charset
+    //
+    // The server validates `names` against ^[a-zA-Z0-9_-]*$ inside `requestToMono`, so a key it
+    // refuses takes the whole request body with it and the caller reads a default that is
+    // indistinguishable from "no flag configured". These assert the predicate directly rather
+    // than through a transport, because it is pure and total.
+
+    func testAKeyTheServerWouldRefuseIsRejectedBeforeTheRoundTrip() {
+        XCTAssertFalse(Flags.isValidKey("checkout.new"), "a dot is outside ^[a-zA-Z0-9_-]*$")
+        XCTAssertFalse(Flags.isValidKey("new checkout"), "a space is outside it")
+        XCTAssertFalse(Flags.isValidKey("pricing:cta"), "a colon is outside it")
+        XCTAssertFalse(Flags.isValidKey("flag/one"), "a slash is outside it")
+        XCTAssertFalse(Flags.isValidKey("café"), "the pattern is ASCII; é is not in it")
+        XCTAssertFalse(Flags.isValidKey(""), "stricter than the server on purpose — * admits empty")
+    }
+
+    func testTheKeysIntegratorsActuallyWriteAreAccepted() {
+        // The guard must not be the reason a working key stops working: every shape the pattern
+        // does allow has to pass, or this fix is a regression dressed as a hardening.
+        XCTAssertTrue(Flags.isValidKey("new_checkout"))
+        XCTAssertTrue(Flags.isValidKey("pricing-cta"))
+        XCTAssertTrue(Flags.isValidKey("Flag2"))
+        XCTAssertTrue(Flags.isValidKey("_leading"))
+        XCTAssertTrue(Flags.isValidKey("-leading"))
+        XCTAssertTrue(Flags.isValidKey("a"))
+    }
+
 }
 
 // MARK: - Flags.detail, against a scripted transport

@@ -61,6 +61,7 @@ MUTANTS=(
 "Sources/Intempt/Flags.swift|if let names { body[\"names\"] = names }|body[\"names\"] = names ?? [String]()|allFlags OMITS names; sending an empty array filters the serving query to nothing and reads as \"no flags exist\""
 "Sources/Intempt/Flags.swift|if let sessionId, !sessionId.isEmpty { body[\"sessionId\"] = sessionId }|body[\"sessionId\"] = sessionId ?? \"\"|sessionId must be sent and must not be blank; ChooserHelper then stores \"default\" and ONCE_PER_VISIT degrades to once-ever-per-profile"
 "Sources/Intempt/Flags.swift|?? .unanswered))|?? .off))|an unanswered evaluation must not read as a deliberate off state (EXP-SERVE-001); off there is a wrong answer, not a missing one"
+"Sources/Intempt/Flags.swift|!key.isEmpty && key.unicodeScalars.allSatisfy(allowedKeyCharacters.contains)|!key.isEmpty|a key the server's ^[a-zA-Z0-9_-]*$ pattern rejects must not be sent; requestToMono refuses the whole body, and the caller cannot tell that refusal from \"no flag configured\""
 "Sources/Intempt/Personalization.swift|return \"mobile\"|return \"tv\"|deviceClass must stay inside ExperienceDevice (all/desktop/mobile); \"tv\" is what this SDK actually sent from tvOS, and an unmappable value fails to bind the WHOLE request so every flag read silently returns the default"
 )
 
