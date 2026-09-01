@@ -11,12 +11,18 @@ live here because the Swift SDK's shape is canonical, decided 2026-08-15.
 | Platform | Repo | Conforms |
 |---|---|---|
 | Swift | `intempt-swift` | canonical — this document describes it |
-| Android | `intempt-android` | in progress, 3.0 clean break |
-| React Native | `intempt-reactnative` | in progress, bridges both |
-| Node | `intempt-node` | client surface only; see Server SDKs |
-| Python | `intempt-python` | client surface only; see Server SDKs |
-| PHP | `intempt-php` | client surface only; see Server SDKs |
-| JavaScript | `intemptjs` | **excluded — see [JavaScript is out of scope](#javascript-is-out-of-scope)** |
+| Android | `intempt-android` | in progress, 3.0 clean break — flag surface NOT started, old shape still live |
+| React Native | `intempt-reactnative` | in progress, bridges both — flag surface not started |
+| Node | `intempt-node` | client surface only; see Server SDKs — four `choose*` methods still live, to be replaced |
+| Python | `intempt-python` | client surface only; see Server SDKs — flag surface never written |
+| PHP | `intempt-php` | client surface only; see Server SDKs — flag surface never written |
+| Java | `intempt-java` | repo created 2026-08-25; already ships the flag types on this wire vocabulary |
+| JavaScript | `intemptjs` | out of scope, predates the contract |
+
+The flag-surface column of this table is a summary of
+[Per-SDK state](#per-sdk-state-verified-2026-08-31-against-each-default-branch); that table is the
+detail and the two are updated together. They disagreed for one revision, which is how a reader
+ended up with two different answers about Android in one file.
 
 Server SDKs conform on the shared capture surface — `track`, `identify`, `group`,
 `alias`, `consent`, `optIn` / `optOut` — and diverge structurally everywhere a server has
@@ -269,51 +275,176 @@ products(feedId, count = 10, fields = defaultFeedFields, productId?) -> Result<[
 `recommendation(id, quantity, fields, productId)` against `/feeds/{id}/data` — so this is
 a rename, not new work.
 
-### `experiments()` is deliberately NOT in any SDK
+### Feature flags and assignment — `variation()`
 
-**Decided 2026-08-15. There is no server-side support for experiment and
-personalization assignment on mobile SDKs or server SDKs.** Assignment is an intemptjs
-capability. No SDK should expose it, and this is not a mobile-only scope decision.
+**Decided 2026-08-24. Assignment IS exposed by every SDK, through the surface below.**
 
-The endpoint answers, which is what made this easy to get wrong. Probed against the live
-project:
+> **GOVERNANCE — NOT YET RECORDED ON BRAIN. This section reverses a standing product ruling,
+> and an SDK repository is not where that reversal becomes true.**
+>
+> `brain/product/changes/2026-08-16-react-native-sdk-and-mobile-surface-scope.md:15-24` records:
+> *"Experiments are not a mobile capability. … Resolved: experiment and personalization
+> assignment is an intemptjs capability and belongs in no mobile SDK. Swift removes it."*
+> Nothing on brain `origin/main` supersedes it. The v2.3→v2.6 spec work opened the `api` surface
+> generically without revisiting the mobile question.
+>
+> The derivation below is sound on its own terms — `experiences-spec.md:54-57` and `:81-84` make
+> a Feature flag `channel=api`, and `:65-67` says *"A mobile app is in the bottom row because
+> there is no page for an editor to point at, not because it is a phone"* — so an iOS SDK
+> reading by key genuinely is `api`-surface. **A sound derivation is still not a reversal of a
+> recorded ruling.** `brain/engineering/changes/2026-08-16-cross-sdk-contract-and-react-native.md:29-32`
+> notes this contract had *"quietly overruled a deliberate product decision"* once already, and
+> the paragraph under "What stays removed" below warns about exactly this shape.
+>
+> **Owner: the PO.** Required before any SDK publishes this surface: a product change on brain
+> recording the reversal. Until that lands, treat this section as an engineering proposal that
+> the code happens to implement, not as settled product scope.
+This supersedes the 2026-08-15 decision recorded here, which read *"There is no
+server-side support for experiment and personalization assignment on mobile SDKs or
+server SDKs. Assignment is an intemptjs capability. No SDK should expose it."*
+
+That decision was correct about the wire as it stood, and its reasoning is worth keeping
+because it is the acceptance criterion for the replacement. It rested on one observation:
 
 ```
 POST /optimization/choose-api  ->  200 {"choices":[]}
 ```
 
-A `200` with an empty set is indistinguishable from "this profile has no assignments yet",
-so a client could ship the method, call it forever, and never branch on a result.
+A `200` with an empty set is indistinguishable from "this profile has no assignments
+yet", so a client could ship the method, call it forever, and never branch on a result.
 
-This reverses an earlier draft of this document, which specified `experiments()` because
-the contract was drafted from `intempt-swift`, which implemented it. Writing a contract
-from one implementation promotes that implementation's surface to a requirement.
+**The premise is being removed rather than argued with — but it has NOT been removed yet.**
+The serving contract *is specified to* return an answer that is self-describing: every
+evaluation carries a `reason`, and an off value is distinguishable from no answer. That is
+the target, not the present tense. Today `ExperienceApiChoose` is `{name, group, body}`,
+`git grep -n reason` over
+`audience-service/src/main/java/com/intempt/cdp/audience/experience/` returns 0, and brain
+records the gap at §8 item 37 under `EXP-SERVE-001`. Once a caller can tell "not enrolled"
+from "no answer", the objection no longer holds and the capability belongs in the SDKs — a
+feature flag that only one platform can read is not a feature flag.
 
-Removal is required on every SDK that has it. Verified against each repository's default
-branch on 2026-08-15:
+Until then, `variation()` ships and `variationDetail()` does not. That split is what makes
+the surface honest while the contract is pending: `variation` returns a VALUE, which is
+correct whether or not a reason exists, and the caller's required `defaultValue` covers the
+absent case. A reason is the only thing that cannot be answered honestly today, so the only
+method withheld is the one whose entire job is to give one.
 
-| SDK | Action | State when checked |
+#### The surface
+
+```
+variation(key, context, defaultValue)         -> T
+allFlags(context)                             -> Map<key, value>
+
+variationDetail(key, context, defaultValue)   -> WITHHELD, see rule 3
+
+boolVariation   (key, context, defaultValue: Bool)
+stringVariation (key, context, defaultValue: String)
+numberVariation (key, context, defaultValue: Number)
+jsonVariation   (key, context, defaultValue: Object)
+
+waitForInitialization(timeout)
+```
+
+Four rules, each of which is a correction to the shape being replaced:
+
+1. **The caller asks for a key, never a mode.** The old surface put the mode in the method
+   name — `choosePersonalizationsByNames`, `chooseExperimentsByGroups` — which forced an
+   integrator to know whether a key was an experiment before reading it, and made the
+   surface grow combinatorially with every new mode. The platform already resolves mode
+   itself; its serving query filters on channel and status and never on mode.
+2. **`defaultValue` is required, not optional.** It is what the call returns on a network
+   failure, a timeout, an unknown key, or a malformed response. Optional is how `undefined`
+   reaches production during an outage.
+3. **`variationDetail` is WITHHELD until the platform sends a reason.** It was specified
+   here as the half answering the 2026-08-15 objection, and the objection stands — but the
+   evaluation response does not carry a reason today. A held-back person's experience is
+   absent from it entirely rather than present with a cause, so every reason the method
+   could return would read `off`, including for someone who WAS targeted and did receive
+   the variant. Value says on, reason says off: a wrong answer, not a missing one, from
+   the one method whose entire job is explaining why.
+
+   No SDK exposes it. Each keeps the logic internal, because `variation` uses it for the
+   value — which is correct either way — and each turns it public in the same change that
+   adds `reason` to the serving contract.
+
+   `variant` goes with it. It was the experience's selector GROUP, not the variant name,
+   which the platform never carries to the response layer at all.
+4. **No local evaluation.** Remote only. Rule-shaped local evaluation is deliberately out
+   of scope on every platform.
+
+Naming follows each language: `variation_detail` / `all_flags` in Python, camelCase
+elsewhere.
+
+#### Channel — a mobile SDK is treated as server
+
+The serving channel is not "client vs server" in the runtime sense. It is whether a visual
+editor can author the change:
+
+- **`web`** — the browser channel. The change is authored visually against the DOM and
+  applied without the caller branching. `intemptjs` is the only SDK on it.
+- **`api`** — every other consumer. The caller receives a value and branches on it in code.
+
+**A mobile SDK runs on a client device and still sits on the `api` channel**, because there
+is no visual editor for a native surface. A flag or experience for iOS or Android cannot be
+set up visually, so it is authored as a payload and read the way a server reads one.
+`intempt-swift`, `intempt-android` and `intempt-reactnative` therefore consume `choose-api`
+alongside the four server SDKs, and the flag key is surfaced to them for the same reason it
+is surfaced to a server: the integrator writes the branch.
+
+Seven of the eight SDKs below are `api`-channel. Only `intemptjs` is `web`. Reading mobile
+as `web` because the code runs on a phone is the mistake this paragraph exists to prevent.
+
+#### What stays removed
+
+The 2026-08-15 removals stand. `experiments()`, `ExperimentChoice`, `OptimizationType`,
+`ModificationProvider`, `Intempt.experiment` and `Intempt.personalization` are superseded
+by the surface above, not restored. The old shape's `optimizationType` argument is dead on
+the wire — it has **zero** references in the serving code and every SDK that still sends it
+is sending a field nothing reads.
+
+Two lessons this section has already paid for, kept because they still apply. **Writing a
+contract from one implementation promotes that implementation's surface to a requirement** —
+the 2026-08-15 revision specified `experiments()` only because Swift happened to implement
+it. And an earlier revision asserted Android had already removed the old shape "as a
+deliberate product decision"; it had not, and the action table consequently told Android to
+do nothing while Swift and React Native removed theirs — the exact divergence this document
+exists to prevent. Verify per repository, against its default branch, on the date stated.
+
+#### Per-SDK state, verified 2026-08-31 against each default branch
+
+| SDK | Old shape | Action |
 |---|---|---|
-| `intempt-swift` | remove `experiments()`, `ExperimentChoice`, `OptimizationType` | done |
-| `intempt-reactnative` | remove the bridged method, spec entry and fixtures | done |
-| `intempt-android` | **removal required** — `ModificationProvider`, `Intempt.experiment`, `Intempt.personalization` | still present in `core/Intempt.kt`, `core/types/interfaces.kt`, `modifications/Modifications.service.kt`, `Modification.component.kt`, `proguard-rules.pro`, with `ModificationsUnitTest.kt` and two README sections |
-| `node` / `python` / `php` | must not be written with it | pages in draft |
+| `intempt-swift` | removed 2026-08-15 | add the surface |
+| `intempt-reactnative` | removed 2026-08-15 | add the surface, both native sides plus the bridge |
+| `intempt-android` | **still live** in `core/Intempt.kt`, `core/types/interfaces.kt`, `modifications/Modifications.service.kt`, `Modification.component.kt`, `proguard-rules.pro`, `ModificationsUnitTest.kt` and two README sections; `Modifications.service.kt` puts `optimizationType` on the wire | remove the old shape, add the surface |
+| `intempt-node` | **still live** — four `choose*` methods | replace |
+| `intempt-python` | never written | add |
+| `intempt-php` | never written | add |
+| `intempt-java` | **repo exists** — created 2026-08-25, last push 2026-08-28, ships `FlagContext`, `FlagDetail`, `FlagReason` | it already carries `FlagReason{TARGETED("targeted"), HOLDOUT("holdout"), NOT_TARGETED("not_targeted"), OFF("off")}` — the same lowercase wire vocabulary as Swift, so there is no wire divergence. One SDK-local divergence to close: Java resolves an unrecognised reason to `OFF`, which is the alias `EXP-SERVE-001` forbids. Swift removed it on 2026-08-31 by adding a distinct SDK-local `unanswered`; Java should do the same |
+| `intemptjs` | the only platform with assignment today | out of contract scope, tracked separately |
 
-An earlier revision of this section claimed Android had already removed these "as a
-deliberate product decision, documented in its `CLAUDE.md`". That was wrong on both
-counts — `intempt-android` has no `CLAUDE.md`, and the capability is live in its code —
-and it mattered, because the action table told Android to do nothing. Swift and React
-Native would have removed theirs while Android kept its, which is precisely the
-divergence this document exists to prevent.
+#### Gate
 
-Recommendation feeds are **unaffected** and stay on every platform — see `products()`
-above. The two were conflated because Android's `ModificationProvider` and its feed call
-sat next to each other; they are different capabilities against different endpoints.
+**No SDK PUBLISHES `variationDetail()` before the serving contract lands, and no SDK
+publishes `variation()` without a required `defaultValue`.** A published method name cannot
+be withdrawn from npm, PyPI, Packagist or Maven — that is what makes a release irreversible
+in a way a merge is not. A `variationDetail` that returns a value without a real `reason`
+reintroduces exactly the ambiguity this section exists to close, so it stays internal in
+every SDK until the serving response carries one.
 
-`products()` defaults `fields` to a compact set on purpose. An unfielded request returns
-every catalog column including raw ML embedding vectors — measured at **443x** the
-payload for the same 10 products, 503 bytes against 222,919. Widen deliberately, never by
-omission. A platform MUST NOT default this to "all fields".
+`variation()` is not held behind that gate. It answers with a value, which is correct
+today, and the required `defaultValue` is what covers the absent case. An earlier revision
+of this Gate said no SDK ships `variation()` at all before the contract lands, which
+contradicted the paragraph 60 lines above it and would have blocked the surface on a
+requirement `variation()` does not have.
+
+**Merging is not shipping, and the distinction is load-bearing.** In this repo
+`publish-cocoapods.yml` is `workflow_dispatch` only, deliberately, so landing on `main`
+publishes nothing to CocoaPods. SPM resolves a branch, though, so `main` IS reachable to an
+integrator the moment a change lands there — treat `main` as a soft release and the tag as
+the hard one.
+
+Recommendation feeds are unaffected and stay on every platform — see `products()` above.
 
 ## Automatic events
 

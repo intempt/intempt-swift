@@ -17,7 +17,7 @@ public enum Intempt {
     /// Keep in step with `Intempt.podspec` and the git tag. CocoaPods resolves
     /// `s.version` against a tag named `v<version>`, so the three moving apart
     /// is how a pod ends up reporting a version it is not.
-    public static let sdkVersion = "0.1.1"
+    public static let sdkVersion = "0.2.0"
 
     /// Catalog columns requested from a recommendation feed by default.
     ///

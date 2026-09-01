@@ -55,9 +55,13 @@ enum Endpoint {
     case track(org: String, project: String, sourceId: String, useIPForGeolocation: Bool)
     /// Consent is separate, unbatched and sent immediately.
     case consents(org: String, project: String)
-    /// Experiments and personalizations, distinguished by an
-    /// `optimizationType` discriminator. Native uses choose-api;
-    /// intemptjs uses choose-web because it is web.
+    /// Flags, experiments and personalizations, read by key.
+    ///
+    /// A native SDK runs on a device and is still an `api`-channel consumer, because there is no
+    /// visual editor for a native surface: the value is authored as a payload and the integrator
+    /// writes the branch. `choose-web` is intemptjs alone, where a change is applied against the
+    /// DOM and the caller never branches.
+    case chooseApi(org: String, project: String)
     /// Product recommendation feeds.
     case feed(org: String, project: String, feedId: String)
 
@@ -72,6 +76,8 @@ enum Endpoint {
                 + (useIPForGeolocation ? "1" : "0")
         case .consents(let org, let project):
             return "/\(org)/projects/\(project)/consents/data"
+        case .chooseApi(let org, let project):
+            return "/\(org)/projects/\(project)/optimization/choose-api"
         case .feed(let org, let project, let feedId):
             return "/\(org)/projects/\(project)/feeds/\(feedId)/data"
         }

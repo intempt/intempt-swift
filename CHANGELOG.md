@@ -3,6 +3,73 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-08-31
+
+A **minor** bump, not a patch: eleven new public declarations. The podspec sat at `0.1.1`
+while CocoaPods trunk served only `0.1.0`, so `0.1.1` was never released and the surface
+below would otherwise have shipped inside a patch version.
+
+### Added
+
+- **Feature flags, experiments and personalizations, read by key.** `variation`,
+  `allFlags`, the four typed helpers (`boolVariation`, `stringVariation`,
+  `numberVariation`, `jsonVariation`), `waitForInitialization` and
+  `FlagContext`. Eight new public symbols, against
+  `POST /{org}/projects/{project}/optimization/choose-api`. `defaultValue` is
+  required everywhere: a network failure, a timeout, an unknown key or a
+  malformed response all resolve to it rather than throwing. Evaluation is
+  remote only — the server buckets, and `scripts/check-no-local-bucketing.mjs`
+  fails the build on a second derivation.
+- **`variationDetail` is deliberately WITHHELD** and stays internal until the
+  serving response carries a `reason`. `ExperienceApiChoose` is
+  `{name, group, body}` today, so every reason the method could return would
+  read `off` — including for someone targeted and served. The conformance gate
+  now enforces the absence rather than a comment describing it.
+- **`docs/CONVENTIONS.md` and `docs/TESTING.md`**, and a CI job asserting bucket
+  derivation stays server-only (`EXP-ASSIGN-004`, `EXP-ASSIGN-005`).
+
+### Fixed
+
+- **A JSON null body reached the caller as `JSONValue.null` instead of their
+  default.** `.map` alone produces `.some(.null)`, which sails past `??`.
+  `variation` and `allFlags` now share one `servedValue` helper so they cannot
+  answer differently about the same key — they did, for one revision.
+- **tvOS sent `device: "tv"`, which the service cannot deserialise.**
+  `ExperienceDevice` is `all`/`desktop`/`mobile` with no `@JsonCreator`, so the
+  whole request failed to bind and every flag read on tvOS returned the caller's
+  default, silently. tvOS now reports `mobile`.
+- **`sessionId` was never sent.** Without it `ChooserHelper` stores the literal
+  `"default"`, so a `ONCE_PER_VISIT` experience was served once ever per profile
+  rather than once per visit, and every Kafka `ExperienceChoose` from iOS was
+  stamped `"default"`.
+- **An unanswered evaluation reported `off`.** `EXP-SERVE-001` requires a caller
+  to tell a deliberate off state from a request the service did not answer;
+  `Flags.unanswered` aliased the two. `FlagReason` now carries a distinct,
+  SDK-local `unanswered`.
+- **A flag key the service refuses was sent anyway.**
+  `ExperienceApiChooseRequest.names` is validated against `^[a-zA-Z0-9_-]*$` by
+  `HandlerUtils.requestToMono`, so `variation("checkout.new")` spent a round trip
+  to be refused and the caller could not tell that refusal from "no flag is
+  configured" — both arrive as the default. `Flags.isValidKey` now rejects it
+  locally. Deliberately not an `assertionFailure`: a dotted key is a naming
+  mistake, not a structural bug, and aborting a debug build over one is worse
+  than reading the default.
+- **`scripts/check-no-local-bucketing.mjs` passed while scanning nothing.**
+  `GUARD_SRC` defaulted to `src`, which no Swift package has, and a missing root
+  yielded silently — so run without CI's environment the guard reported OK on a
+  real breach. It now fails on a missing or empty root, defaults to this repo's
+  own directories, and prints the file count it actually read. This was finding
+  F1 of the `intempt-android` review, fixed there and not carried across; the
+  script is vendored into every Intempt SDK, so the same hole exists wherever it
+  landed with an empty allowlist.
+- **`IntemptDemo` was outside the format gate.** `swift format lint` covered
+  `Sources` and `Tests` only, which is why an indentation regression in the demo
+  — the file an evaluator copies from — could go green.
+- **`docs/CONTRACT.md` was wrong about `choose-api` in two ways** — it said the
+  endpoint has no `names` array (it does, and it is the filter this whole
+  surface depends on) and printed `choose-web`'s 200 body under a `choose-api`
+  heading. Both cost an earlier reviewer a false CRITICAL against another SDK.
+
 ## [0.1.1] — 2026-08-18
 
 ### Added

@@ -50,9 +50,19 @@ final class EndpointTests: XCTestCase {
         XCTAssertFalse(e.path.contains("/sources/"), "consent is not source-scoped")
     }
 
-    /// Native clients use choose-api. choose-web is the web variant and must
-    /// never appear here.
+    /// A native SDK uses choose-api. choose-web is intemptjs alone, where a change is applied
+    /// against the DOM and the caller never branches; a native surface has no visual editor, so the
+    /// value is authored as a payload and read like any server call.
+    ///
+    /// This test had an empty body between the 2026-08-15 removal of the endpoint and its return
+    /// here. It passed the whole time, which is what an empty test does.
     func testChooseApiNotChooseWeb() {
+        let e = Endpoint.chooseApi(org: "acme", project: "web")
+        XCTAssertEqual(e.path, "/acme/projects/web/optimization/choose-api")
+        XCTAssertFalse(e.path.contains("choose-web"), "a native SDK is an api-channel consumer")
+        XCTAssertEqual(
+            e.url()?.absoluteString,
+            "https://api.intempt.com/v1/acme/projects/web/optimization/choose-api")
     }
 
     func testFeedPath() {

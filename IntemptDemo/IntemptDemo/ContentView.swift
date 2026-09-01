@@ -24,6 +24,7 @@ struct ContentView: View {
             List {
                 trackingSection
                 commerceSection
+                flagsSection
                 personalizationSection
                 privacySection
                 deliverySection
@@ -42,42 +43,47 @@ struct ContentView: View {
     private var trackingSection: some View {
         Section("Tracking") {
             Button("Track event") {
-                let ok = intempt?.track(
-                    eventTitle: "Demo Button Tapped",
-                    data: ["screen": "ContentView", "at": Date()]) ?? false
+                let ok =
+                    intempt?.track(
+                        eventTitle: "Demo Button Tapped",
+                        data: ["screen": "ContentView", "at": Date()]) ?? false
                 DemoLog.append("track → \(ok)")
             }
             .accessibilityIdentifier("track-button")
 
             Button("Identify user") {
-                let ok = intempt?.identify(
-                    userId: "demo@intempt.com",
-                    userAttributes: ["plan": "pro", "seats": 3]) ?? false
+                let ok =
+                    intempt?.identify(
+                        userId: "demo@intempt.com",
+                        userAttributes: ["plan": "pro", "seats": 3]) ?? false
                 DemoLog.append("identify → \(ok)")
             }
             .accessibilityIdentifier("identify-button")
 
             Button("Set account") {
-                let ok = intempt?.group(
-                    accountId: "demo-account",
-                    accountAttributes: ["tier": "enterprise"]) ?? false
+                let ok =
+                    intempt?.group(
+                        accountId: "demo-account",
+                        accountAttributes: ["tier": "enterprise"]) ?? false
                 DemoLog.append("group → \(ok)")
             }
             .accessibilityIdentifier("group-button")
 
             Button("Record (user + account)") {
-                let ok = intempt?.record(
-                    eventTitle: "Demo Signup",
-                    userId: "demo@intempt.com",
-                    accountId: "demo-account",
-                    data: ["source": "demo-app"]) ?? false
+                let ok =
+                    intempt?.record(
+                        eventTitle: "Demo Signup",
+                        userId: "demo@intempt.com",
+                        accountId: "demo-account",
+                        data: ["source": "demo-app"]) ?? false
                 DemoLog.append("record → \(ok)")
             }
             .accessibilityIdentifier("record-button")
 
             Button("Alias") {
-                let ok = intempt?.alias(
-                    userId: "demo@intempt.com", anotherUserId: "demo-alias") ?? false
+                let ok =
+                    intempt?.alias(
+                        userId: "demo@intempt.com", anotherUserId: "demo-alias") ?? false
                 DemoLog.append("alias → \(ok)")
             }
             .accessibilityIdentifier("alias-button")
@@ -85,8 +91,9 @@ struct ContentView: View {
             // Proves the SDK refuses a value that cannot survive JSON rather
             // than shipping the string "nan", which is what upstream does.
             Button("Track invalid (NaN)") {
-                let ok = intempt?.track(
-                    eventTitle: "Demo Invalid", data: ["bad": Double.nan]) ?? false
+                let ok =
+                    intempt?.track(
+                        eventTitle: "Demo Invalid", data: ["bad": Double.nan]) ?? false
                 DemoLog.append("track NaN → \(ok) (false is correct)")
             }
             .accessibilityIdentifier("invalid-button")
@@ -121,6 +128,42 @@ struct ContentView: View {
     }
 
     // MARK: - Recommendations
+
+    private var flagsSection: some View {
+        Section("Flags") {
+            Button("Read a flag") {
+                // Ask for a KEY. Whether it names an experiment, a personalization or a flag is
+                // the platform's business, and this call does not change when that does.
+                //
+                // The default is not optional and it is a real decision: it is what you get when
+                // Intempt cannot be reached. Choose the behaviour you already have.
+                intempt?.boolVariation(key: "new_checkout", defaultValue: false) { on in
+                    DemoLog.append("new_checkout → \(on)")
+                }
+            }
+            .accessibilityIdentifier("flag-button")
+
+            Button("Read a string flag") {
+                intempt?.stringVariation(
+                    key: "pricing_cta",
+                    defaultValue: "Get started"
+                ) { cta in
+                    DemoLog.append("pricing_cta → \(cta)")
+                }
+            }
+            .accessibilityIdentifier("flag-string-button")
+
+            Button("Read every flag") {
+                intempt?.allFlags { values in
+                    DemoLog.append("allFlags → \(values.count) key(s)")
+                    for (key, value) in values {
+                        DemoLog.append("  \(key) = \(value)")
+                    }
+                }
+            }
+            .accessibilityIdentifier("all-flags-button")
+        }
+    }
 
     private var personalizationSection: some View {
         Section("Recommendations") {

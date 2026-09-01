@@ -285,14 +285,71 @@ final class PersonalizationTests: IntemptTestCase {
 
     // MARK: - Device class
 
+    /// The mutation gate's mutant is `return "mobile" -> return "tv"`, and until the mapping was
+    /// lifted out of `#if os(macOS) / #else` nothing could kill it: the `#else` arm is not
+    /// compiled on the macOS host `swift test` runs on, so the defect was literally absent from
+    /// the binary under test. These assertions name the platform instead of inheriting it.
+    func testTVOSSendsMobileNotTV() {
+        // The bug this replaced: tvOS sent "tv", ExperienceDevice has no such member, the whole
+        // choose-api request failed to bind, and every flag read returned the caller's default
+        // with no error surface. Exact equality — "not tv" is not the assertion, "is mobile" is.
+        XCTAssertEqual(Personalization.deviceClass(for: .tvOS), "mobile")
+    }
+
+    func testEveryNonDesktopPlatformSendsMobile() {
+        XCTAssertEqual(Personalization.deviceClass(for: .iOS), "mobile")
+        XCTAssertEqual(Personalization.deviceClass(for: .tvOS), "mobile")
+        XCTAssertEqual(Personalization.deviceClass(for: .watchOS), "mobile")
+        XCTAssertEqual(Personalization.deviceClass(for: .other), "mobile")
+        XCTAssertEqual(Personalization.deviceClass(for: .macOS), "desktop")
+    }
+
+    /// The reverse check: not merely that tvOS is "mobile", but that NO platform can produce a
+    /// value the server cannot bind. Goes red on a new arm returning "tv", "watch" or "vision"
+    /// as well as on the existing arms changing.
+    func testNoPlatformProducesAValueOutsideTheServerEnum() {
+        for platform in Personalization.HostPlatform.allCases {
+            let device = Personalization.deviceClass(for: platform)
+            XCTAssertTrue(
+                Personalization.allowedDeviceClasses.contains(device),
+                "\(platform.rawValue) sends \(device), which is not one of \(Personalization.allowedDeviceClasses)"
+            )
+        }
+    }
+
     func testDeviceClassIsPlatformAppropriate() {
         #if os(macOS)
             XCTAssertEqual(Personalization.deviceClass, "desktop")
-        #elseif os(tvOS)
-            XCTAssertEqual(Personalization.deviceClass, "tv")
         #else
+            // tvOS included, deliberately. It sent "tv" until 2026-08-31 and the server enum has
+            // no such member, so the request did not bind at all.
             XCTAssertEqual(Personalization.deviceClass, "mobile")
         #endif
+    }
+
+    func testTheHostPlatformResolvesToTheHostThisSuiteRunsOn() {
+        // Binds `hostPlatform` to reality, so the `#if` ladder cannot rot into a lie while
+        // `deviceClass(for:)` stays green on inputs nothing feeds it.
+        #if os(macOS)
+            XCTAssertEqual(Personalization.hostPlatform, .macOS)
+        #elseif os(tvOS)
+            XCTAssertEqual(Personalization.hostPlatform, .tvOS)
+        #elseif os(watchOS)
+            XCTAssertEqual(Personalization.hostPlatform, .watchOS)
+        #elseif os(iOS)
+            XCTAssertEqual(Personalization.hostPlatform, .iOS)
+        #endif
+        XCTAssertEqual(Personalization.deviceClass, Personalization.deviceClass(for: Personalization.hostPlatform))
+    }
+
+    func testDeviceClassStaysInsideTheServerEnum() {
+        // ExperienceDevice is all/desktop/mobile with @JsonValue and no @JsonCreator. A value
+        // outside it fails to deserialise the WHOLE choose-api request, so every flag read
+        // returns the caller's default with no error surface. This is the assertion that goes
+        // red if someone adds a platform arm returning "tv", "watch" or "vision".
+        XCTAssertTrue(
+            Personalization.allowedDeviceClasses.contains(Personalization.deviceClass),
+            "device \(Personalization.deviceClass) is not one of \(Personalization.allowedDeviceClasses)")
     }
 
     // MARK: - Number rendering

@@ -11,6 +11,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # EXP-ASSIGN-004 / EXP-ASSIGN-005: the platform decides which variant a person gets. An SDK
+  # that derives its own bucket can disagree with the server, and the same person is then served
+  # differently depending on the channel they arrive through — silently, because each side is
+  # internally consistent. A second derivation also puts EXP-ASSIGN-004's exact rollout
+  # boundaries and EXP-ASSIGN-005's stability across sign-in outside the platform's control.
+  # Runs without install so it cannot be skipped.
+  bucketing:
+    name: Server-only bucketing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: No SDK derives buckets locally (EXP-ASSIGN-004, EXP-ASSIGN-005)
+        run: node scripts/check-no-local-bucketing.mjs
+        env:
+          # Tests and the demo too. A bucketing helper written in a test is still a second
+          # derivation, and the demo is what an evaluator copies from.
+          GUARD_SRC: Sources,Tests,IntemptDemo
+
   test:
     name: swift test
     runs-on: macos-15
@@ -28,7 +49,42 @@ jobs:
           INTEMPT_ORG_ID: ${{ secrets.INTEMPT_ORG_ID }}
           INTEMPT_PROJECT_ID: ${{ secrets.INTEMPT_PROJECT_ID }}
           INTEMPT_SOURCE_ID: ${{ secrets.INTEMPT_SOURCE_ID }}
-        run: swift test --parallel --enable-code-coverage
+        run: |
+          set -o pipefail
+          swift test --parallel --enable-code-coverage 2>&1 | tee swift-test.log
+
+      # swift test prints no usable total. Its own summary reads "Test run with 0 tests passed"
+      # because swift-testing reports only ITS lane, and --xunit-output has the same blind spot:
+      # the first version of this step used it, found 0, and failed a green build - the file
+      # genuinely says 0 while 308 XCTest cases ran. Under --parallel the only place the real total
+      # appears is the [n/TOTAL] progress prefix, so that is what this reads.
+      - name: Report the test total
+        if: always()
+        run: |
+          set -uo pipefail
+          total=$(grep -oE '^\[[0-9]+/[0-9]+\] Testing' swift-test.log 2>/dev/null \
+                  | grep -oE '/[0-9]+' | tr -d '/' | sort -n | tail -1 || true)
+          if [ -z "${total:-}" ]; then
+            # The empty suite USED to land here and pass. A collection of zero tests prints no
+            # [n/TOTAL] progress line at all, so the -eq 0 check below could only ever fire when
+            # tests HAD run — the one case this step exists for was the one it could not catch.
+            # So before allowing the warning path, require independent evidence that XCTest
+            # started something. No such line and no total is an empty suite, not a bad scrape.
+            if ! grep -qE "^Test (Suite|Case) '" swift-test.log 2>/dev/null; then
+              echo "::error::no test total and no XCTest suite line — the suite collected 0 tests"
+              exit 1
+            fi
+            # Undeterminable is NOT failure. Failing a build because a count could not be scraped
+            # is a worse defect than the missing count, and this is a scrape either way.
+            echo "::warning::could not determine the test total from swift-test.log"
+            exit 0
+          fi
+          echo "Executed $total tests"
+          echo "**swift test** — executed $total" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$total" -eq 0 ]; then
+            echo "::error::the suite reports 0 tests"
+            exit 1
+          fi
 
       # This repo had no coverage of any kind — not a low number, no number.
       # The mutation gate is a stronger signal than coverage on the fifteen
@@ -171,7 +227,7 @@ jobs:
         run: ./scripts/check-contract-conformance.sh
 
       - name: swift-format
-        run: swift format lint --recursive --strict Sources Tests
+        run: swift format lint --recursive --strict Sources Tests IntemptDemo
       - name: gitleaks
         # The binary, not gitleaks/gitleaks-action@v2. That action refuses to run
         # for an organization without a paid licence — "[intempt] is an
