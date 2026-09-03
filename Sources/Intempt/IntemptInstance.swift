@@ -130,6 +130,7 @@ public final class IntemptInstance {
     let flusher: Flush
     private let personalization: Personalization
     private let flags: Flags
+    private let pushWebhook: PushWebhookSender
     var automatic: AutomaticEvents!
     /// Held so its observers live as long as the instance; `deinit` removes them.
     private var lifecycle: AppLifecycle!
@@ -179,6 +180,7 @@ public final class IntemptInstance {
         self.flags = Flags(
             network: network, credentials: credentials,
             orgId: orgId, projectId: projectId, sourceId: sourceId)
+        self.pushWebhook = PushWebhookSender(network: network, credentials: credentials)
 
         // `automatic` needs to call back into `self`, so it is built after all
         // stored properties are initialised and captures self weakly.
@@ -748,18 +750,44 @@ public final class IntemptInstance {
     /// Reports that a push was opened. Call from
     /// `userNotificationCenter(_:didReceive:withCompletionHandler:)`.
     ///
+    /// Two things happen. A "Push Opened" event is queued for analytics, and an
+    /// `opened` report is posted to the push webhook so the send's own numbers
+    /// move — the same webhook `NotificationDispatcherActivity` posts to on
+    /// Android. The webhook is skipped when the payload carries no Intempt
+    /// metadata, which is how a notification from somewhere else is ignored.
+    ///
     /// The notification body is never read — only the campaign identifier and
     /// the developer-authored title.
     @discardableResult
     public func trackPushOpen(_ userInfo: [AnyHashable: Any]) -> Bool {
-        track(eventTitle: EventNames.pushOpened, data: Push.attribution(from: userInfo))
+        pushWebhook.report(.opened, userInfo: userInfo)
+        return track(eventTitle: EventNames.pushOpened, data: Push.attribution(from: userInfo))
     }
 
-    /// Reports a silent or foreground push arrival. Call from
-    /// `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`.
+    /// Reports a push arrival. Call from
+    /// `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`, or
+    /// from a notification service extension's
+    /// `didReceive(_:withContentHandler:)`.
+    ///
+    /// Reports `delivered`, or `bounced` when notifications are denied and the
+    /// system will therefore not display it. That mirrors Android exactly:
+    /// `FirebaseService.notifySafely` checks `POST_NOTIFICATIONS` and reports
+    /// BOUNCED instead of rendering.
+    ///
+    /// Both are bounded by the same platform fact, which is not a gap in this
+    /// SDK: iOS only wakes the app for a notification that is `content-available`
+    /// or `mutable-content`, or that arrives in the foreground. A plain alert
+    /// delivered to a backgrounded app is never seen by any code, here or in a
+    /// service extension, so it is reported by neither.
     @discardableResult
     public func trackPushReceived(_ userInfo: [AnyHashable: Any]) -> Bool {
-        track(eventTitle: EventNames.pushReceived, data: Push.attribution(from: userInfo))
+        if let metadata = PushMetadata(userInfo: userInfo) {
+            let sender = pushWebhook
+            PushAuthorization.probe { displayable in
+                sender.report(displayable ? .delivered : .bounced, metadata: metadata)
+            }
+        }
+        return track(eventTitle: EventNames.pushReceived, data: Push.attribution(from: userInfo))
     }
 
     /// Enqueues a "Session end" for a session that has already finished.

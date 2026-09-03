@@ -58,7 +58,7 @@ final class Network {
     private let session: URLSessionProtocol
     private let host: String
 
-    init(session: URLSessionProtocol = URLSession.shared, host: String = APIConstants.host) {
+    init(session: URLSessionProtocol = URLSession.shared, host: String = APIConstants.rootHost) {
         self.session = session
         self.host = host
     }

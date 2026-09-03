@@ -16,8 +16,14 @@
 import Foundation
 
 enum APIConstants {
-    /// Production ingestion host. Every path below is appended to this.
-    static let host = "https://api.intempt.com/v1"
+    /// Gateway root. Webhook routes are registered directly under it, with no
+    /// version segment — `PushSourceDataRoutes.java` lists
+    /// `/webhooks/events/push-notification` alongside `/v1/{orgName}/...`, so
+    /// the two families genuinely differ by more than a path.
+    static let rootHost = "https://api.intempt.com"
+
+    /// Production ingestion host. Every versioned path below is appended to this.
+    static let host = rootHost + "/v1"
 
     /// Matches intemptjs's RequestBatcher batch size.
     static let maxBatchSize = 50
@@ -47,8 +53,9 @@ enum EventConstants {
     static let eventIdPrefix = "ev_"
 }
 
-/// The four endpoints a client SDK talks to, enumerated from every `fetch(`
-/// call site in intemptjs. There are no others.
+/// Every endpoint a client SDK talks to: the four ingestion routes enumerated
+/// from intemptjs's `fetch(` call sites, plus the push webhook the Android SDK
+/// already posts to.
 enum Endpoint {
     /// Batched events — identify, group, record, track, product all
     /// funnel here as one mixed-type `{"track":[...]}` envelope.
@@ -64,6 +71,13 @@ enum Endpoint {
     case chooseApi(org: String, project: String)
     /// Product recommendation feeds.
     case feed(org: String, project: String, feedId: String)
+    /// Push delivery, bounce and open reports.
+    ///
+    /// Org and project are not in the path: they travel in the body, because
+    /// the ids come from the notification's own payload rather than from the
+    /// SDK's configuration. A notification service extension reporting a
+    /// delivery has the payload and may not have an initialised instance.
+    case pushNotificationWebhook
 
     var path: String {
         switch self {
@@ -80,10 +94,25 @@ enum Endpoint {
             return "/\(org)/projects/\(project)/optimization/choose-api"
         case .feed(let org, let project, let feedId):
             return "/\(org)/projects/\(project)/feeds/\(feedId)/data"
+        case .pushNotificationWebhook:
+            return "/webhooks/events/push-notification"
         }
     }
 
-    func url(host: String = APIConstants.host) -> URL? {
-        URL(string: host + path)
+    /// `/v1` for the ingestion routes, nothing for the webhook.
+    ///
+    /// Kept apart from `path` so `path` stays the org/project-scoped string the
+    /// wire tests already assert, and so the difference is a value a test can
+    /// read rather than a string two call sites have to remember to concatenate
+    /// differently.
+    var versionPrefix: String {
+        switch self {
+        case .pushNotificationWebhook: return ""
+        case .track, .consents, .chooseApi, .feed: return "/v1"
+        }
+    }
+
+    func url(host: String = APIConstants.rootHost) -> URL? {
+        URL(string: host + versionPrefix + path)
     }
 }
