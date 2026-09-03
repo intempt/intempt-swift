@@ -75,13 +75,6 @@ struct ContentView: View {
             }
             .accessibilityIdentifier("record-button")
 
-            Button("Alias") {
-                let ok = intempt?.alias(
-                    userId: "demo@intempt.com", anotherUserId: "demo-alias") ?? false
-                DemoLog.append("alias → \(ok)")
-            }
-            .accessibilityIdentifier("alias-button")
-
             // Proves the SDK refuses a value that cannot survive JSON rather
             // than shipping the string "nan", which is what upstream does.
             Button("Track invalid (NaN)") {

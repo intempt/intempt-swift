@@ -116,9 +116,6 @@ final class LiveMethodCoverageTests: IntemptTestCase {
             "group", "",
             intempt.group(accountId: "live-coverage-account", accountAttributes: ["tier": "t"]))
         check(
-            "alias", "",
-            intempt.alias(userId: "live-coverage@intempt.com", anotherUserId: "live-alias"))
-        check(
             "record", "",
             intempt.record(
                 eventTitle: "Live record", userId: "live-coverage@intempt.com",

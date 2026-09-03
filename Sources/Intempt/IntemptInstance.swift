@@ -287,15 +287,6 @@ public final class IntemptInstance {
     }
 
     @discardableResult
-    public func alias(userId: String, anotherUserId: String) -> Bool {
-        enqueue { env in
-            AliasModel(
-                eventId: env.eventId, profileId: env.profileId,
-                userId: userId, anotherUserId: anotherUserId)
-        }
-    }
-
-    @discardableResult
     public func record(
         eventTitle: String,
         userId: String? = nil,

@@ -5,10 +5,9 @@
 //  Copyright © 2026 Intempt Technologies, Inc.
 //  Licensed under the Apache License, Version 2.0.
 //
-//  The seven wire models. Every field verified against intemptjs:
+//  The six wire models. Every field verified against intemptjs:
 //    IdentifyModelPayload  autoTracker.types.ts:118-127  identify.model.ts
 //    GroupModelPayload     autoTracker.types.ts:129-137  group.model.ts
-//    AliasModelPayload     autoTracker.types.ts:161-168  alias.model.ts
 //    RecordModelPayload    autoTracker.types.ts:148-159  record.model.ts
 //    TrackModelPayload     autoTracker.types.ts:139-146  track.model.ts
 //    ProductModelPayload   autoTracker.types.ts:170-177
@@ -74,31 +73,6 @@ struct GroupModel: IntemptModel {
         payload["accountId"] = accountId
         if let accountAttributes { payload["accountAttributes"] = accountAttributes }
         return payload
-    }
-}
-
-// MARK: - Alias
-
-/// Deliberately thinner than every other model: no `sessionId`, no `pageId`.
-/// intemptjs comments both out in AliasModelPayload; adding them would
-/// diverge from the shape ingestion expects.
-struct AliasModel: IntemptModel {
-    let eventId: String
-    let profileId: String
-    let userId: String
-    let anotherUserId: String
-
-    var type: String { "alias" }
-    /// intemptjs hardcodes "Identify" for alias events.
-    var name: String { "Identify" }
-
-    func toPayload() -> [String: Any] {
-        [
-            "eventId": eventId,
-            "profileId": profileId,
-            "userId": userId,
-            "anotherUserId": anotherUserId,
-        ]
     }
 }
 
@@ -265,7 +239,7 @@ struct ConsentModel {
 
 enum TrackEnvelope {
     /// `{"track":[ {name,type,payload:[…]}, … ]}` — one request carries a
-    /// MIXED batch: identify, group, alias, record, track and product all
+    /// MIXED batch: identify, group, record, track and product all
     /// funnel through the same endpoint (verified at
     /// intemptjs autoTracker.module.ts:328-334, where every type except
     /// consent falls through to the batcher).

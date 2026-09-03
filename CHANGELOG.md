@@ -3,6 +3,19 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **BREAKING:** `IntemptInstance.alias(userId:anotherUserId:)` and the `AliasModel` wire
+  model. Linking two user identities is the CDP's job, not the caller's: identity
+  resolution already converges two user ids the moment they share any identifier, so
+  `alias` only reached the case where two ids never co-occur at all — an id-scheme
+  migration, which belongs in a server-side backfill. A wrong call permanently fused two
+  real people and there is no unmerge. `identify` is unchanged and remains the stitch
+  trigger. `docs/CONTRACT.md` still lists the `alias` wire type because ingestion still
+  accepts it; only the client surface is gone.
+
 ## [0.1.1] — 2026-08-18
 
 ### Added

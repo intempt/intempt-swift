@@ -148,11 +148,9 @@ final class LiveContractTests: IntemptTestCase {
         XCTAssertTrue(instance.productAdd(productId: "sku_live", quantity: 2))
         XCTAssertTrue(
             instance.productOrdered(products: [(productId: "sku_live", quantity: 1)]))
-        XCTAssertTrue(
-            instance.alias(userId: "live-test@intempt.com", anotherUserId: "live-alias"))
 
         let queued = instance.queuedEventCount()
-        XCTAssertEqual(queued, 8)
+        XCTAssertEqual(queued, 7)
         XCTAssertEqual(flush(instance), queued, "every model type must be accepted")
         XCTAssertEqual(instance.queuedEventCount(), 0)
     }

@@ -236,10 +236,6 @@ final class JSParityTests: XCTestCase {
                     accountAttributes: nil), "group"
             ),
             (
-                AliasModel(eventId: "ev_1", profileId: "pr_1", userId: "u", anotherUserId: "v"),
-                "alias"
-            ),
-            (
                 RecordModel(
                     envelope: envelope, name: "X", userId: "u", accountId: nil,
                     data: nil, userAttributes: nil, accountAttributes: nil), "record"

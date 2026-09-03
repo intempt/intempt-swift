@@ -60,17 +60,6 @@ final class ModelsTests: XCTestCase {
         XCTAssertNil(p["userId"], "group is the account concept, not the user concept")
     }
 
-    // MARK: Alias
-
-    /// Regression guard: alias must NOT gain sessionId/pageId the way every
-    /// other model has them.
-    func testAliasIsDeliberatelyThinner() {
-        let m = AliasModel(
-            eventId: "ev_1", profileId: "p1", userId: "u1", anotherUserId: "u2")
-        XCTAssertEqual(keys(m.toPayload()), ["eventId", "profileId", "userId", "anotherUserId"])
-        XCTAssertEqual(m.name, "Identify")
-    }
-
     // MARK: Record
 
     func testRecordUserOnlyOmitsAccountFields() {
@@ -173,7 +162,6 @@ final class ModelsTests: XCTestCase {
             TrackModel(envelope: env, name: "T", data: nil),
             IdentifyModel(envelope: env, name: "I", userId: "u", userAttributes: nil, data: nil),
             GroupModel(envelope: env, name: "G", accountId: "a", accountAttributes: nil),
-            AliasModel(eventId: "ev_1", profileId: "p1", userId: "u", anotherUserId: "u2"),
             RecordModel(
                 envelope: env, name: "R", userId: "u", accountId: nil, data: nil,
                 userAttributes: nil, accountAttributes: nil),

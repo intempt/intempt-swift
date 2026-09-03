@@ -20,7 +20,7 @@ live here because the Swift SDK's shape is canonical, decided 2026-08-15.
 | Java | `intempt-java` | **read path only.** Feature flags and personalization; no capture, identity, consent or opt-out. Not published to Maven Central and carries no release tag |
 
 Server SDKs conform on the shared capture surface — `track`, `identify`, `group`,
-`alias`, `consent`, `optIn` / `optOut` — and diverge structurally everywhere a server has
+`consent`, `optIn` / `optOut` — and diverge structurally everywhere a server has
 no device, session or per-user state. Those divergences are enumerated under
 [Server SDKs](#server-sdks) so nobody "fixes" them into conformance.
 
@@ -101,7 +101,6 @@ dropped — opted out, invalid property, encoding failure, storage unavailable. 
 track(eventTitle, data?) -> Bool
 identify(userId, eventTitle = "Identify", userAttributes?, data?) -> Bool
 group(accountId, eventTitle = "Identify", accountAttributes?) -> Bool
-alias(userId, anotherUserId) -> Bool
 record(eventTitle, userId?, accountId?, data?, userAttributes?, accountAttributes?) -> Bool
 ```
 
