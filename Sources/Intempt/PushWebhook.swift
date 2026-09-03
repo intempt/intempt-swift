@@ -262,6 +262,21 @@ final class PushWebhookSender {
         delay: TimeInterval,
         completion: ((HTTPOutcome) -> Void)?
     ) {
+        // THE gate. Checked before every attempt, so it covers the first send and
+        // each of the three retries alike — a retry is a new request, and the
+        // backoff spans seven seconds, long enough to opt out inside.
+        //
+        // One check rather than one per call site, deliberately. Earlier revisions
+        // had four: at each entry point, in the probe callback, and in the retry
+        // loop. Three of them could be deleted with no test failing, because this
+        // one already covered their cases. A gate no test can distinguish is a
+        // gate nobody can prove works.
+        guard isPermitted() else {
+            IntemptLogger.shared.log(
+                .debug, "push \(status.rawValue) not reported: collection has stopped")
+            return
+        }
+
         network.send(request) { [weak self] outcome in
             guard let self else {
                 completion?(outcome)
@@ -282,13 +297,6 @@ final class PushWebhookSender {
             }
 
             self.scheduler(delay) {
-                guard self.isPermitted() else {
-                    IntemptLogger.shared.log(
-                        .debug,
-                        "push \(status.rawValue) report abandoned mid-retry: collection stopped")
-                    completion?(outcome)
-                    return
-                }
                 self.attempt(
                     request, status: status, number: number + 1,
                     delay: delay * 2, completion: completion)
@@ -326,6 +334,9 @@ enum PushAuthorization {
 
     static func reset() {
         probe = defaultProbe
+        #if canImport(UserNotifications)
+            statusSource = liveStatusSource
+        #endif
     }
 
     /// Assumes displayable when it cannot ask.
@@ -334,12 +345,68 @@ enum PushAuthorization {
     /// process as bounced, which would invent failures rather than observe them.
     static func defaultProbe(_ completion: @escaping (Bool) -> Void) {
         #if canImport(UserNotifications)
-            guard Bundle.main.bundleIdentifier != nil else { return completion(true) }
-            UNUserNotificationCenter.current().getNotificationSettings { settings in
-                completion(settings.authorizationStatus != .denied)
+            statusSource { status in
+                guard let status else { return completion(true) }
+                completion(isDisplayable(status))
             }
         #else
             completion(true)
         #endif
     }
+
+    #if canImport(UserNotifications)
+        /// Where the authorization status comes from. `nil` means it could not be
+        /// asked — an unbundled process — and the caller assumes displayable.
+        ///
+        /// A seam, for one reason: without it `defaultProbe` is unreachable from
+        /// a test, because `UNUserNotificationCenter.current()` raises in a
+        /// process with no bundle identifier. Replacing the mapping call here
+        /// with the old `!= .denied` was a mutation that survived a full suite
+        /// even after `isDisplayable` itself was covered — the logic was tested
+        /// and the wiring to it was not.
+        static var statusSource: (@escaping (UNAuthorizationStatus?) -> Void) -> Void =
+            liveStatusSource
+
+        static func liveStatusSource(_ completion: @escaping (UNAuthorizationStatus?) -> Void) {
+            guard Bundle.main.bundleIdentifier != nil else { return completion(nil) }
+            UNUserNotificationCenter.current().getNotificationSettings { completion($0.authorizationStatus) }
+        }
+    #endif
+
+    #if canImport(UserNotifications)
+        /// Whether this status means the system will surface the notification
+        /// somewhere the user can see it.
+        ///
+        /// Separated from `defaultProbe` so it can be tested at all.
+        /// `UNUserNotificationCenter.current()` raises in a process with no bundle
+        /// identifier, so the probe is unreachable from a test — which left the
+        /// one piece of real logic in this type executed by nothing. A review
+        /// inverted the whole comparison and no test failed.
+        ///
+        /// `.notDetermined` is NOT displayable. The user has never been asked, so
+        /// iOS shows nothing. Reporting that as `delivered` is the defect this
+        /// replaced: a bare `!= .denied` admitted it. Android never had the
+        /// problem, because `FirebaseService.notificationsAllowed` tests
+        /// `checkSelfPermission(POST_NOTIFICATIONS) == PERMISSION_GRANTED` — only
+        /// granted counts, and "never asked" is not granted.
+        ///
+        /// `.provisional` and `.ephemeral` ARE displayable. Provisional delivers
+        /// quietly to the notification centre, ephemeral is an App Clip's
+        /// short-lived grant. In both the notification arrives.
+        /// Written as "everything except the two that withhold" rather than a
+        /// list of the granting cases, because `.ephemeral` does not exist on
+        /// macOS and this SDK builds for macOS too. It also means a status Apple
+        /// adds later is treated as a delivery: every one added since iOS 10 —
+        /// `.provisional` in 12, `.ephemeral` in 14 — was a new way of granting,
+        /// and calling an unknown one a bounce would invent a failure for a
+        /// delivery that happened, which a journey then branches on.
+        static func isDisplayable(_ status: UNAuthorizationStatus) -> Bool {
+            switch status {
+            case .denied, .notDetermined:
+                return false
+            default:
+                return true
+            }
+        }
+    #endif
 }

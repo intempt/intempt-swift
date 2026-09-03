@@ -280,8 +280,10 @@ APNs only. There is no Firebase or FCM dependency at any layer.
 event, and they report the outcome to Intempt's push webhook so the send's own
 delivered / bounced / opened numbers move — the same webhook and the same three
 statuses the Android SDK reports. `trackPushReceived` reports `bounced` instead
-of `delivered` when notifications are denied, matching Android's
-`POST_NOTIFICATIONS` check.
+of `delivered` when the system will not display the notification — both when the
+user has denied notifications and when they have never been prompted. That is
+what Android's `checkSelfPermission(POST_NOTIFICATIONS) == PERMISSION_GRANTED`
+means: only granted counts as a delivery.
 
 Neither call does anything for a notification Intempt did not send: with no
 Intempt metadata in the payload, no request is made.

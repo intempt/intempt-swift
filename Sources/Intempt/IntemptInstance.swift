@@ -763,12 +763,11 @@ public final class IntemptInstance {
     ///
     /// The notification body is never read — only the campaign identifier and
     /// the developer-authored title. Nothing is reported once the user has opted
-    /// out; see `trackPushReceived` for why the webhook needs its own gate.
+    /// out — `PushWebhookSender` refuses before every attempt, so the gate does
+    /// not need repeating here.
     @discardableResult
     public func trackPushOpen(_ userInfo: [AnyHashable: Any]) -> Bool {
-        if !hasOptedOut() {
-            pushWebhook.report(.opened, userInfo: userInfo)
-        }
+        pushWebhook.report(.opened, userInfo: userInfo)
         return track(eventTitle: EventNames.pushOpened, data: Push.attribution(from: userInfo))
     }
 
@@ -776,6 +775,11 @@ public final class IntemptInstance {
     /// `masterId` and `accountId`, which identify a person, and `optOut` promises
     /// to stop collection — a report that outlives it would be the one piece of
     /// person-linked traffic the opt-out did not reach.
+    ///
+    /// The check here is not the send gate — `PushWebhookSender` is, before every
+    /// attempt. It exists for its own reason: to stop the authorization probe
+    /// being consulted at all, which is a system call about someone who has said
+    /// stop.
     ///
     /// Reports a push arrival. Call from
     /// `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`, or
@@ -796,9 +800,7 @@ public final class IntemptInstance {
     public func trackPushReceived(_ userInfo: [AnyHashable: Any]) -> Bool {
         if !hasOptedOut(), let metadata = PushMetadata(userInfo: userInfo) {
             let sender = pushWebhook
-            let isStillCollecting = { [weak self] in self?.hasOptedOut() == false }
             PushAuthorization.probe { displayable in
-                guard isStillCollecting() else { return }
                 sender.report(displayable ? .delivered : .bounced, metadata: metadata)
             }
         }

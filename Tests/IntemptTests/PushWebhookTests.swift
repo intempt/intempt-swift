@@ -1,5 +1,9 @@
 import XCTest
 
+#if canImport(UserNotifications)
+    import UserNotifications
+#endif
+
 @testable import Intempt
 
 /// The push webhook is the ONLY path that moves a send's own delivered/bounced/
@@ -503,6 +507,86 @@ final class PushWebhookTests: IntemptTestCase {
 
         wait(for: [done], timeout: 2)
         XCTAssertEqual(session.requestCount, PushWebhookSender.maxAttempts)
+    }
+
+    // MARK: - Authorization mapping
+
+    /// The only real logic in `PushAuthorization`, and until this existed it was
+    /// executed by no test at all: every other test replaces `probe` wholesale,
+    /// and `UNUserNotificationCenter.current()` raises without a bundle id so the
+    /// probe itself cannot run here. A review inverted this comparison and the
+    /// full 366-test suite stayed green.
+    #if canImport(UserNotifications)
+        /// Never asked is not granted. iOS displays nothing, so it is a bounce.
+        /// A bare `!= .denied` reported it as `delivered` — the defect this pins.
+        func testNotDeterminedIsNotADelivery() {
+            XCTAssertFalse(PushAuthorization.isDisplayable(.notDetermined))
+        }
+
+        func testDeniedIsNotADelivery() {
+            XCTAssertFalse(PushAuthorization.isDisplayable(.denied))
+        }
+
+        /// Provisional delivers quietly to the notification centre and ephemeral
+        /// is an App Clip's grant. In both the notification arrives.
+        func testEveryGrantedFormIsADelivery() {
+            XCTAssertTrue(PushAuthorization.isDisplayable(.authorized))
+            XCTAssertTrue(PushAuthorization.isDisplayable(.provisional))
+            #if !os(macOS)
+                // App Clip grant. The case does not exist on macOS, which is why
+                // isDisplayable enumerates the withholding statuses instead of
+                // the granting ones.
+                XCTAssertTrue(PushAuthorization.isDisplayable(.ephemeral))
+            #endif
+        }
+
+        /// Android reports BOUNCED for anything that is not
+        /// `PERMISSION_GRANTED`, and "never asked" is not granted. Both docs
+        /// claim this SDK matches that check, so the claim is asserted here
+        /// rather than left in prose.
+        func testTheTwoUngrantedStatusesAgreeWithEachOther() {
+            XCTAssertEqual(
+                PushAuthorization.isDisplayable(.notDetermined),
+                PushAuthorization.isDisplayable(.denied),
+                "Android bounces both; neither is PERMISSION_GRANTED")
+        }
+    #endif
+
+    #if canImport(UserNotifications)
+        /// Covers the WIRING, not the mapping. `isDisplayable` was tested while
+        /// the line that calls it was not, and reverting that line to the old
+        /// `!= .denied` survived the whole suite.
+        func testTheProbeRunsEveryStatusThroughTheMapping() {
+            for (status, expected) in [
+                (UNAuthorizationStatus.notDetermined, false),
+                (.denied, false),
+                (.authorized, true),
+                (.provisional, true),
+            ] {
+                PushAuthorization.statusSource = { $0(status) }
+                var answer: Bool?
+                PushAuthorization.defaultProbe { answer = $0 }
+                XCTAssertEqual(answer, expected, "status \(status.rawValue)")
+            }
+        }
+
+        /// An unbundled process cannot ask, and must not invent a bounce.
+        func testAnUnaskableProcessAssumesDelivered() {
+            PushAuthorization.statusSource = { $0(nil) }
+            var answer: Bool?
+            PushAuthorization.defaultProbe { answer = $0 }
+            XCTAssertEqual(answer, true)
+        }
+    #endif
+
+    /// The gate now covers the first attempt too, not only the retries.
+    func testNothingIsSentAtAllWhenPermissionIsWithdrawn() {
+        let session = MockSession(replies: [.ok()])
+        let sender = sender(session)
+        sender.isPermitted = { false }
+
+        XCTAssertTrue(sender.report(.opened, userInfo: apnsPayload()), "metadata parsed")
+        XCTAssertEqual(session.requestCount, 0, "not even the first attempt may go out")
     }
 
     func testRetryClassification() {

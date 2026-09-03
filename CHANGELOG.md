@@ -14,8 +14,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `/webhooks/events/push-notification` — the same gateway route, the same
   `PushNotificationEvent` body and the same three statuses the Android SDK has always used.
   `trackPushOpen` reports `opened`; `trackPushReceived` reports `delivered`, or `bounced`
-  when notifications are denied, mirroring `FirebaseService.notifySafely`'s
-  `POST_NOTIFICATIONS` check. The analytics events still fire — this is additive.
+  when the system will not display the notification. That means denied AND never-asked, which
+  is what Android's `checkSelfPermission(POST_NOTIFICATIONS) == PERMISSION_GRANTED` means:
+  only granted counts, and a user who has never been prompted is not granted. The analytics events still fire — this is additive.
   `destinationType` and `subject` are `apns`, matching `DestinationTypes.APNS` and
   `RSocketConnectorName.APNS`. A notification carrying no Intempt metadata makes no request.
   Requires single-metadata `feature/apns-destination-type` and destinations-processor #391,
