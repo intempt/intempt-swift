@@ -113,9 +113,11 @@ final class FlushTests: IntemptTestCase {
         let flush = makeFlush()
         _ = flushSync(flush)
 
+        // `?ip=1` states that the platform may derive country/region/city from the address the
+        // request already arrives on. The device never reads or sends its own address.
         XCTAssertEqual(
             session.requests.first?.url?.absoluteString,
-            "https://api.intempt.com/v1/acme/projects/web/sources/42/track")
+            "https://api.intempt.com/v1/acme/projects/web/sources/42/track?ip=1")
     }
 
     // MARK: - Batching
@@ -309,7 +311,7 @@ final class FlushTests: IntemptTestCase {
         XCTAssertTrue(
             session.requests[0].url!.absoluteString.hasSuffix("/consents/data"),
             "consent must be sent first, to its own endpoint")
-        XCTAssertTrue(session.requests[1].url!.absoluteString.hasSuffix("/track"))
+        XCTAssertTrue(session.requests[1].url!.absoluteString.contains("/track"))
         XCTAssertEqual(db.count(.consents), 0)
     }
 

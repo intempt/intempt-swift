@@ -17,13 +17,13 @@ final class NetworkTests: XCTestCase {
     func testTrackRequestShape() throws {
         let net = Network()
         let req = try net.makeRequest(
-            endpoint: .track(org: "acme", project: "web", sourceId: "42"),
+            endpoint: .track(org: "acme", project: "web", sourceId: "42", useIPForGeolocation: true),
             credentials: creds,
             body: ["track": []])
 
         XCTAssertEqual(
             req.url?.absoluteString,
-            "https://api.intempt.com/v1/acme/projects/web/sources/42/track")
+            "https://api.intempt.com/v1/acme/projects/web/sources/42/track?ip=1")
         XCTAssertEqual(req.httpMethod, "POST")
         XCTAssertEqual(req.value(forHTTPHeaderField: "Content-Type"), "application/json")
         XCTAssertEqual(
@@ -36,7 +36,7 @@ final class NetworkTests: XCTestCase {
     /// produced duplicate headers behind some proxies in the old SDK.
     func testContentLengthIsNotSetManually() throws {
         let req = try Network().makeRequest(
-            endpoint: .track(org: "a", project: "b", sourceId: "1"),
+            endpoint: .track(org: "a", project: "b", sourceId: "1", useIPForGeolocation: true),
             credentials: creds, body: ["track": []])
         XCTAssertNil(req.value(forHTTPHeaderField: "Content-Length"))
     }

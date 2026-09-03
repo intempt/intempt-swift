@@ -30,6 +30,59 @@ final class IntemptInstanceTests: XCTestCase {
 
     // MARK: - initialize
 
+    /// A second initialize with a different geolocation flag used to return the cached
+    /// instance with the old value, no throw and no log — so "initialise at launch,
+    /// initialise again after the consent banner" left collection on with no signal at all.
+    /// The instance still wins, deliberately, but the mismatch is now recorded and readable.
+    func testSecondInitializeKeepsTheFirstGeolocationChoiceAndIsInspectable() throws {
+        let first = try IntemptInstance.initialize(
+            apiKey: "pre.secret", orgId: "o", projectId: "p", sourceId: "s",
+            instanceName: "geo-cache", useIPAddressForGeolocation: true)
+        XCTAssertTrue(first.useIPAddressForGeolocation)
+
+        let second = try IntemptInstance.initialize(
+            apiKey: "pre.secret", orgId: "o", projectId: "p", sourceId: "s",
+            instanceName: "geo-cache", useIPAddressForGeolocation: false)
+
+        XCTAssertTrue(second === first, "initialize stays idempotent")
+        // The value a caller can read back must be the one actually in force, not the one
+        // they last asked for. Without the stored property this is unanswerable from outside,
+        // which is what made the silent drop invisible.
+        XCTAssertTrue(
+            second.useIPAddressForGeolocation,
+            "the first value stands; a caller can see which one won")
+    }
+
+    /// The wiring, not the enum. `?ip=0` appeared in exactly one assertion repo-wide — on the
+    /// bare `Endpoint` case — so both forwarding arguments inside `initialize` were untested:
+    /// hardcoding either to `true` left all 310 tests green while a customer's `false` was
+    /// silently ignored. That is the opt-out failing open, which is the direction that matters.
+    func testInitializeForwardsTheGeolocationChoiceToTheInstance() throws {
+        let off = try IntemptInstance.initialize(
+            apiKey: "pre.secret", orgId: "o", projectId: "p", sourceId: "s",
+            instanceName: "geo-off", useIPAddressForGeolocation: false)
+        let on = try IntemptInstance.initialize(
+            apiKey: "pre.secret", orgId: "o", projectId: "p", sourceId: "s",
+            instanceName: "geo-on", useIPAddressForGeolocation: true)
+
+        XCTAssertFalse(
+            off.useIPAddressForGeolocation,
+            "a customer asking to decline must reach the instance, not be defaulted back on")
+        XCTAssertTrue(on.useIPAddressForGeolocation)
+        // Asserting the difference as well, so neither branch can be satisfied by a constant.
+        XCTAssertNotEqual(off.useIPAddressForGeolocation, on.useIPAddressForGeolocation)
+
+        // And the WIRE, which is a separate forwarding argument. The property above and the
+        // Flush construction are fed independently; an earlier version of this test asserted
+        // only the property, so hardcoding the Flush argument left all 311 tests green while
+        // every request still carried `?ip=1`. The URL is the thing a customer's opt-out has
+        // to reach.
+        XCTAssertTrue(
+            off.flusher.trackEndpoint.path.contains("ip=0"),
+            "declining must reach the request URL, not just the instance property")
+        XCTAssertTrue(on.flusher.trackEndpoint.path.contains("ip=1"))
+    }
+
     func testInitializeRejectsMalformedAPIKey() {
         XCTAssertThrowsError(
             try IntemptInstance.initialize(
@@ -112,11 +165,6 @@ final class IntemptInstanceTests: XCTestCase {
         XCTAssertEqual(sdk.queuedEventCount(), 1)
     }
 
-    func testAlias() {
-        XCTAssertTrue(sdk.alias(userId: "u1", anotherUserId: "u2"))
-        XCTAssertEqual(sdk.queuedEventCount(), 1)
-    }
-
     func testRecord() {
         XCTAssertTrue(
             sdk.record(
@@ -193,7 +241,6 @@ final class IntemptInstanceTests: XCTestCase {
         XCTAssertFalse(sdk.track(eventTitle: "x"))
         XCTAssertFalse(sdk.identify(userId: "u"))
         XCTAssertFalse(sdk.group(accountId: "a"))
-        XCTAssertFalse(sdk.alias(userId: "u", anotherUserId: "v"))
         XCTAssertFalse(sdk.record(eventTitle: "r", userId: "u"))
         XCTAssertFalse(sdk.productAdd(productId: "s", quantity: 1))
         XCTAssertFalse(sdk.productView(productId: "s"))

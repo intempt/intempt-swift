@@ -11,8 +11,7 @@
 //
 import Foundation
 
-/// Fields carried by every model except `alias`, which is deliberately
-/// thinner (see `AliasModel`).
+/// Fields carried by every model.
 struct EventEnvelope: Equatable {
     let eventId: String
     let profileId: String
@@ -51,7 +50,7 @@ struct EventEnvelope: Equatable {
 /// Every model serialises to one payload dictionary and declares the `type`
 /// discriminator ingestion routes on.
 protocol IntemptModel {
-    /// `identify` · `group` · `alias` · `record` · `track` · `product` ·
+    /// `identify` · `group` · `record` · `track` · `product` ·
     /// `consent` — matches intemptjs's model `type` field exactly.
     ///
     /// Empty means "omit the field", which only `SessionModel` does: intemptjs's

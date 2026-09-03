@@ -83,9 +83,6 @@ final class IntemptDemoUITests: XCTestCase {
 
         tap("record-button")
         XCTAssertTrue(logContains("record → true"))
-
-        tap("alias-button")
-        XCTAssertTrue(logContains("alias → true"))
     }
 
     /// A NaN cannot survive JSON. Upstream stringifies it to "nan" and ships

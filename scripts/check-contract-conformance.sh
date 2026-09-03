@@ -17,7 +17,7 @@ fail=0
 # Every symbol the contract names as part of the shared surface.
 INSTANCE_METHODS=(
     initialize mainInstance instance
-    track identify group alias record
+    track identify group record
     productAdd productView productOrdered
     consent
     getProfileId getSessionId

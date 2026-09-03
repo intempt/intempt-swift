@@ -97,7 +97,6 @@ forever is not a recovery.
 intempt.track(eventTitle: String, data: [String: IntemptType]?)
 intempt.identify(userId: String, eventTitle: String, userAttributes: [String: IntemptType]?, data: [String: IntemptType]?)
 intempt.group(accountId: String, eventTitle: String, accountAttributes: [String: IntemptType]?)
-intempt.alias(userId: String, anotherUserId: String)
 intempt.record(eventTitle: String, userId: String?, accountId: String?, data: ..., userAttributes: ..., accountAttributes: ...)
 ```
 
@@ -212,6 +211,20 @@ intempt.hasOptedOut()
 intempt.logOut()          // rotate anonymous identity
 intempt.reset()           // new identity, empty queue
 ```
+
+### Geolocation
+
+```swift
+IntemptInstance.initialize(
+    apiKey: apiKey, orgId: orgId, projectId: projectId, sourceId: sourceId,
+    useIPAddressForGeolocation: false)
+```
+
+Intempt derives country, region and city server-side from the address a request already
+arrives on (on by default, matching mixpanel-swift). The device never reads or sends its own
+address — the SDK sends `?ip=1`/`?ip=0` and the platform discards the connection address
+after resolving it. Leaving this on means the app collects Coarse Location; the shipped
+privacy manifest declares it, so set this to `false` before release if you don't want to.
 
 ### Delivery
 

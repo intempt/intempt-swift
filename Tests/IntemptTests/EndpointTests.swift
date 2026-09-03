@@ -9,11 +9,38 @@ import XCTest
 final class EndpointTests: XCTestCase {
 
     func testTrackPath() {
-        let e = Endpoint.track(org: "acme", project: "web", sourceId: "42")
-        XCTAssertEqual(e.path, "/acme/projects/web/sources/42/track")
+        let e = Endpoint.track(org: "acme", project: "web", sourceId: "42", useIPForGeolocation: true)
+        XCTAssertEqual(e.path, "/acme/projects/web/sources/42/track?ip=1")
         XCTAssertEqual(
             e.url()?.absoluteString,
-            "https://api.intempt.com/v1/acme/projects/web/sources/42/track")
+            "https://api.intempt.com/v1/acme/projects/web/sources/42/track?ip=1")
+    }
+
+    /// The device never reads its own address. It states whether the platform may derive location
+    /// from the address the request already arrives on, and that is the whole mechanism.
+    func testTrackPathCarriesTheGeolocationFlag() {
+        let off = Endpoint.track(org: "acme", project: "web", sourceId: "42", useIPForGeolocation: false)
+        XCTAssertEqual(off.path, "/acme/projects/web/sources/42/track?ip=0")
+
+        let on = Endpoint.track(org: "acme", project: "web", sourceId: "42", useIPForGeolocation: true)
+        XCTAssertEqual(on.path, "/acme/projects/web/sources/42/track?ip=1")
+        XCTAssertNotEqual(on.path, off.path, "the flag must actually change the request")
+    }
+
+    /// Exactly one `?ip=`. A second would be parsed as part of the first value.
+    func testGeolocationFlagAppearsExactlyOnce() {
+        let path = Endpoint.track(
+            org: "acme", project: "web", sourceId: "42",
+            useIPForGeolocation: true
+        ).path
+        XCTAssertEqual(path.components(separatedBy: "?ip=").count - 1, 1)
+    }
+
+    /// Consent and feed carry no geolocation flag; only /track does.
+    func testOnlyTrackCarriesTheFlag() {
+        XCTAssertFalse(Endpoint.consents(org: "acme", project: "web").path.contains("ip="))
+        XCTAssertFalse(
+            Endpoint.feed(org: "acme", project: "web", feedId: "1").path.contains("ip="))
     }
 
     func testConsentsPathIsSeparateFromTrack() {

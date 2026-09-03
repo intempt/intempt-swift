@@ -36,15 +36,16 @@ final class GoldenWireTests: XCTestCase {
 
         let body = TrackEnvelope.wrap(models: [model])
         let request = try Network().makeRequest(
-            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77"),
+            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77", useIPForGeolocation: true),
             credentials: creds,
             body: body)
 
         // --- URL ---------------------------------------------------------
         XCTAssertEqual(
             request.url?.absoluteString,
-            "https://api.intempt.com/v1/acme/projects/ecommerce/sources/77/track",
-            "URL must match intemptjs autoTracker.module.ts:163")
+            "https://api.intempt.com/v1/acme/projects/ecommerce/sources/77/track?ip=1",
+            "URL must match intemptjs autoTracker.transport.ts — both SDKs now carry ?ip=, "
+                + "which states whether the platform may derive location from the request address")
 
         // --- Method + headers -------------------------------------------
         XCTAssertEqual(request.httpMethod, "POST")
@@ -134,13 +135,10 @@ final class GoldenWireTests: XCTestCase {
                 accountAttributes: ["seats": 25]),
             TrackModel(envelope: env, name: "Page View", data: nil),
             ProductModel(envelope: env, name: "Product View", productId: "sku_9", quantity: 2),
-            AliasModel(
-                eventId: "ev_FIXED-EVENT-ID", profileId: "pr_FIXED-PROFILE",
-                userId: "u_1", anotherUserId: "u_2"),
         ]
 
         let request = try Network().makeRequest(
-            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77"),
+            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77", useIPForGeolocation: true),
             credentials: creds,
             body: TrackEnvelope.wrap(models: models))
 
@@ -149,11 +147,11 @@ final class GoldenWireTests: XCTestCase {
                 JSONHandler.deserializeData(try XCTUnwrap(request.httpBody)) as? [String: Any])
         let entries = try XCTUnwrap(decoded["track"] as? [[String: Any]])
 
-        XCTAssertEqual(entries.count, 5)
+        XCTAssertEqual(entries.count, 4)
         XCTAssertEqual(
             entries.compactMap { $0["type"] as? String },
-            ["identify", "group", "track", "product", "alias"],
-            "all five types travel in ONE request")
+            ["identify", "group", "track", "product"],
+            "all four types travel in ONE request")
 
         // Every payload satisfies ingestion's identity rule
         for entry in entries {
@@ -164,12 +162,6 @@ final class GoldenWireTests: XCTestCase {
                     "\(entry["type"] ?? "?") payload failed the identity rule")
             }
         }
-
-        // Alias keeps its deliberately thinner shape inside the batch
-        let alias = try XCTUnwrap(entries.first { $0["type"] as? String == "alias" })
-        let aliasPayload = try XCTUnwrap((alias["payload"] as? [[String: Any]])?.first)
-        XCTAssertEqual(
-            Set(aliasPayload.keys), ["eventId", "profileId", "userId", "anotherUserId"])
     }
 
     /// A Date or NaN reaching the encoder must not silently drop the event.
@@ -185,7 +177,7 @@ final class GoldenWireTests: XCTestCase {
             ])
 
         let request = try Network().makeRequest(
-            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77"),
+            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77", useIPForGeolocation: true),
             credentials: creds,
             body: TrackEnvelope.wrap(models: [model]))
 
@@ -223,7 +215,7 @@ final class GoldenWireTests: XCTestCase {
         let entry = try XCTUnwrap(JSONHandler.deserializeData(rows[0].data) as? [String: Any])
 
         let request = try Network().makeRequest(
-            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77"),
+            endpoint: .track(org: "acme", project: "ecommerce", sourceId: "77", useIPForGeolocation: true),
             credentials: creds,
             body: TrackEnvelope.wrap([entry]))
 

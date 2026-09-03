@@ -16,8 +16,8 @@ live here because the Swift SDK's shape is canonical, decided 2026-08-15.
 | Node | `intempt-node` | client surface only; see Server SDKs — four `choose*` methods still live, to be replaced |
 | Python | `intempt-python` | client surface only; see Server SDKs — flag surface never written |
 | PHP | `intempt-php` | client surface only; see Server SDKs — flag surface never written |
-| Java | `intempt-java` | repo created 2026-08-25; already ships the flag types on this wire vocabulary |
-| JavaScript | `intemptjs` | out of scope, predates the contract |
+| Java | `intempt-java` | repo created 2026-08-25; already ships the flag types on this wire vocabulary. **Read path only** — feature flags and personalization; no capture, identity, consent or opt-out. Not published to Maven Central and carries no release tag |
+| JavaScript | `intempt-js` | **out of scope — see below.** `intemptjs` is the same repository under its former name |
 
 The flag-surface column of this table is a summary of
 [Per-SDK state](#per-sdk-state-verified-2026-08-31-against-each-default-branch); that table is the
@@ -25,12 +25,96 @@ detail and the two are updated together. They disagreed for one revision, which 
 ended up with two different answers about Android in one file.
 
 Server SDKs conform on the shared capture surface — `track`, `identify`, `group`,
-`alias`, `consent`, `optIn` / `optOut` — and diverge structurally everywhere a server has
+`consent`, `optIn` / `optOut` — and diverge structurally everywhere a server has
 no device, session or per-user state. Those divergences are enumerated under
 [Server SDKs](#server-sdks) so nobody "fixes" them into conformance.
 
 A divergence that is *gratuitous* rather than structural is a bug, and belongs in an
 issue rather than in the table.
+
+**Every shipped SDK appears in the table above, and a new SDK does not ship without an
+entry in it.** The table is the inventory, not a summary of one — an SDK absent from it is
+an SDK nobody has decided the shape of.
+
+## JavaScript is out of scope
+
+`intempt-js` predates this contract and is excluded from it deliberately. The reasons, so
+nobody reopens the question or "fixes" the SDK toward a shape it was never built for:
+
+1. **It ships a three-state consent model, not an opt-in/opt-out pair.** Its surface is
+   `accept` / `reject` with its own stored state, and its persistence is a cookie with a
+   localStorage fallback — deliberate, because an origin-scoped store alone loses an
+   opt-out across subdomains. Rewriting that as a two-state pair would change behaviour
+   for every site already using it.
+2. **It is the only SDK with autocapture of arbitrary page content.** The contract's
+   capture rules assume a caller naming an event; `intemptjs` also captures what a person
+   typed. That is a different privacy surface and needs its own rules, not these.
+3. **It has the largest installed base and no major-version break planned.** The other
+   SDKs adopted the contract at a clean break. This one has no such break scheduled, so
+   conformance would be a breaking change with no version to carry it.
+
+Excluded does not mean unowned. Its published documentation must describe the API it
+actually ships, and its opt-out must persist — both are tracked as requirements against
+`intempt-js` itself rather than against this contract. The cost is real: a customer using
+both the web SDK and any other one meets two different opt-out APIs.
+
+## The server SDK surface
+
+The Status table marks the server SDKs "client surface only", which says what they are
+*not* without ever saying what they *are*. This section says what they are.
+
+It is deliberately **not** called "Server SDKs": [Accepted divergences](#accepted-divergences)
+already contains a `### Server SDKs` heading listing what a server SDK structurally lacks,
+and two headings of the same name would give one of them a `-1` anchor and silently
+retarget the existing link at the top of this document. The two are complements — that one
+records the absences, this one records the surface.
+
+**Published server SDKs:** `intempt-node`, `intempt-python`, `intempt-php`.
+
+`intempt-java` is **not in the published set.** It has no publish workflow, so no consumer
+can depend on it, and it currently exposes flag reads only. It joins this table the day it
+publishes; until then a capability missing from it is not a conformance defect.
+
+### The shared server surface
+
+Every published server SDK exposes these, in the naming convention of its language:
+
+| Capability | Node / PHP | Python |
+|---|---|---|
+| Capture one event | `track` | `track` |
+| Capture many | `trackBatch` | `track_batch` |
+| Identify a person | `identify` | `identify` |
+| Associate an account | `group` | `group` |
+| Link two identities | `alias` | `alias` |
+| Opt in / opt out / status | `optIn` `optOut` `isOptedIn` | `opt_in` `opt_out` `is_opted_in` |
+| Read personalization | `recommend` | `recommend` |
+| Change configuration | `setConfig` `config` | `set_config` `config` |
+| Flush and shut down | `flush` `close` | `flush` `close` |
+
+### What a server SDK does NOT have
+
+No device, no session, no per-user state on the instance, therefore no automatic events,
+no autocapture, no screen tracking, and no anonymous-identity rotation. A server SDK is
+given the identity by its caller on every call. These absences are structural and must not
+be "fixed" into conformance.
+
+### Structural divergences that are permitted
+
+| Divergence | Where | Why it is allowed |
+|---|---|---|
+| Consent and ecommerce as separate objects rather than instance methods | PHP, Node | Namespacing is idiomatic in both; Python puts them on the client for the same reason |
+| Buffer inspection (`buffered`) | Python, PHP | Exposed where the language has no natural way to observe a queue otherwise |
+
+### Divergences that are NOT permitted
+
+A capability present in some published server SDKs and absent in others, where nothing
+about the language explains the gap, is a defect in the ones missing it. Two exist today
+and are open against the SDKs, not against this document:
+
+| Capability | Present in | Absent from |
+|---|---|---|
+| `trackLines` | PHP | Node, Python |
+| `transport` accessor | PHP, Node | Python |
 
 ## Why the Swift shape
 
@@ -57,10 +141,25 @@ Android's deliberate removal was right and drafting from Swift had quietly overr
 ## Initialisation
 
 ```
-initialize(apiKey, orgId, projectId, sourceId, instanceName = "default") -> Instance
+initialize(apiKey, orgId, projectId, sourceId, instanceName = "default",
+           useIPAddressForGeolocation = true) -> Instance
 ```
 
 Throws on a malformed API key (not `prefix.secret`) and on any blank identifier.
+
+`useIPAddressForGeolocation` decides whether Intempt derives country, region and city
+from the address the request arrives on. It defaults to **on**, matching what ingestion
+assumes when the flag is absent, so an unset switch and an unpatched server agree. Every
+capture-class SDK MUST accept it: an SDK that ignores it ships a decorative opt-out.
+
+The value MUST be readable back after initialisation. An SDK whose initialise is idempotent
+returns the existing instance on a second call, so without a reader a caller has no way to
+find out which value is in force — Swift exposes `public let useIPAddressForGeolocation`.
+
+**An SDK whose initialise is idempotent MUST NOT silently discard this argument on a
+later call.** Returning a cached instance and dropping the flag fails in the
+privacy-unsafe direction, and "initialise at launch, initialise again after the consent
+banner" is the ordinary shape. Log it at minimum; a settable property is better.
 
 Credentials are passed at runtime. A platform MAY additionally support a config file —
 Android reads `assets/intempt-config.json` and that path is retained — but a file MUST
@@ -85,7 +184,6 @@ dropped — opted out, invalid property, encoding failure, storage unavailable. 
 track(eventTitle, data?) -> Bool
 identify(userId, eventTitle = "Identify", userAttributes?, data?) -> Bool
 group(accountId, eventTitle = "Identify", accountAttributes?) -> Bool
-alias(userId, anotherUserId) -> Bool
 record(eventTitle, userId?, accountId?, data?, userAttributes?, accountAttributes?) -> Bool
 ```
 
