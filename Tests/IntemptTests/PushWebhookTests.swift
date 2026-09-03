@@ -202,15 +202,19 @@ final class PushWebhookTests: IntemptTestCase {
         XCTAssertEqual(session.requestCount, 0)
     }
 
-    /// A failed report is logged and dropped, never retried and never thrown.
-    func testAServerErrorIsSwallowed() {
-        let session = MockSession(replies: [.status(500)])
+    /// A report that fails every attempt is logged and dropped. It never throws
+    /// and never reaches the caller as an error — a push interaction must not be
+    /// able to take the host app down.
+    func testAPersistentServerErrorIsSwallowed() {
+        let session = MockSession(replies: [], fallback: .status(500))
         let done = expectation(description: "reported")
-        sender(session).report(.delivered, userInfo: apnsPayload()) { outcome in
+        retryingSender(session, delays: { _ in }).report(.delivered, userInfo: apnsPayload()) {
+            outcome in
             XCTAssertFalse(outcome.isSuccess)
             done.fulfill()
         }
         wait(for: [done], timeout: 2)
+        XCTAssertEqual(session.requestCount, PushWebhookSender.maxAttempts)
     }
 
     // MARK: - Instance wiring
@@ -225,9 +229,9 @@ final class PushWebhookTests: IntemptTestCase {
         XCTAssertTrue(try instance(session).trackPushOpen(apnsPayload()))
 
         waitUntil("webhook posted") { session.requestCount == 1 }
-        XCTAssertEqual(session.bodies[0]["status"] as? String, "opened")
+        XCTAssertEqual(session.bodies.first?["status"] as? String, "opened")
         XCTAssertEqual(
-            session.requests[0].url?.path, "/webhooks/events/push-notification",
+            session.requests.first?.url?.path, "/webhooks/events/push-notification",
             "the analytics flush uses a different path; this must be the webhook")
     }
 
@@ -237,7 +241,7 @@ final class PushWebhookTests: IntemptTestCase {
         XCTAssertTrue(try instance(session).trackPushReceived(apnsPayload()))
 
         waitUntil("webhook posted") { session.requestCount == 1 }
-        XCTAssertEqual(session.bodies[0]["status"] as? String, "delivered")
+        XCTAssertEqual(session.bodies.first?["status"] as? String, "delivered")
     }
 
     /// The iOS half of `FirebaseService.notifySafely`: authorization denied means
@@ -248,9 +252,9 @@ final class PushWebhookTests: IntemptTestCase {
         XCTAssertTrue(try instance(session).trackPushReceived(apnsPayload()))
 
         waitUntil("webhook posted") { session.requestCount == 1 }
-        XCTAssertEqual(session.bodies[0]["status"] as? String, "bounced")
+        XCTAssertEqual(session.bodies.first?["status"] as? String, "bounced")
         XCTAssertNotEqual(
-            session.bodies[0]["status"] as? String, "delivered",
+            session.bodies.first?["status"] as? String, "delivered",
             "a push the system suppressed was not delivered")
     }
 
@@ -267,5 +271,143 @@ final class PushWebhookTests: IntemptTestCase {
 
         XCTAssertFalse(probed)
         XCTAssertEqual(session.requestCount, 0)
+    }
+
+    // MARK: - Opt-out
+
+    /// The webhook body carries `masterId` and `accountId`, which identify a
+    /// person. `optOut` promises to stop collection, and the webhook is not
+    /// routed through `track` — so it needs its own gate or it becomes the one
+    /// piece of person-linked traffic the opt-out does not reach.
+    func testAnOptedOutUserReportsNoOpen() throws {
+        let session = MockSession(replies: [.ok()])
+        let instance = try instance(session)
+        instance.optOut()
+
+        _ = instance.trackPushOpen(apnsPayload())
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertEqual(session.requestCount, 0, "opt-out must reach the webhook too")
+    }
+
+    func testAnOptedOutUserReportsNoDelivery() throws {
+        PushAuthorization.probe = { $0(true) }
+        let session = MockSession(replies: [.ok()])
+        let instance = try instance(session)
+        instance.optOut()
+
+        _ = instance.trackPushReceived(apnsPayload())
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertEqual(session.requestCount, 0)
+    }
+
+    /// Opting back in restores reporting, so the gate is a gate and not an
+    /// accidental permanent disable.
+    func testOptingBackInResumesReporting() throws {
+        let session = MockSession(replies: [.ok()])
+        let instance = try instance(session)
+        instance.optOut()
+        instance.optIn()
+
+        _ = instance.trackPushOpen(apnsPayload())
+
+        waitUntil("webhook posted") { session.requestCount == 1 }
+        XCTAssertEqual(session.bodies.first?["status"] as? String, "opened")
+    }
+
+    /// Opting out DURING the authorization probe must still stop the report.
+    /// The probe is async, so the decision to send outlives the check that
+    /// permitted it.
+    func testOptingOutWhileTheAuthorizationProbeIsInFlightStopsTheReport() throws {
+        let session = MockSession(replies: [.ok()])
+        let instance = try instance(session)
+
+        var release: ((Bool) -> Void)?
+        PushAuthorization.probe = { release = $0 }
+
+        _ = instance.trackPushReceived(apnsPayload())
+        XCTAssertEqual(session.requestCount, 0, "probe has not answered yet")
+
+        instance.optOut()
+        release?(true)
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertEqual(session.requestCount, 0)
+    }
+
+    // MARK: - Retry
+
+    private func retryingSender(
+        _ session: MockSession, delays: @escaping (TimeInterval) -> Void
+    ) -> PushWebhookSender {
+        PushWebhookSender(
+            network: Network(session: session),
+            credentials: try! IntemptCredentials(apiKey: "pfx.secret"),
+            scheduler: { delay, work in
+                delays(delay)
+                work()
+            })
+    }
+
+    /// Android retries this webhook four times with a doubling delay, and says
+    /// why: a dropped DELIVERED makes a journey believe the push never arrived
+    /// and send the wrong follow-up to a real person.
+    func testATransientFailureIsRetriedUpToFourAttempts() {
+        let session = MockSession(replies: [], fallback: .status(503))
+        var delays: [TimeInterval] = []
+        let done = expectation(description: "gave up")
+
+        retryingSender(session, delays: { delays.append($0) })
+            .report(.delivered, userInfo: apnsPayload()) { _ in done.fulfill() }
+
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(session.requestCount, 4)
+        XCTAssertEqual(delays, [1, 2, 4], "the delay must double, not repeat")
+    }
+
+    func testRetryingStopsAsSoonAsOneAttemptSucceeds() {
+        let session = MockSession(replies: [.status(503), .ok()], fallback: .status(503))
+        let done = expectation(description: "sent")
+
+        retryingSender(session, delays: { _ in })
+            .report(.opened, userInfo: apnsPayload()) { outcome in
+                XCTAssertTrue(outcome.isSuccess)
+                done.fulfill()
+            }
+
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(session.requestCount, 2, "a success must not be followed by more attempts")
+    }
+
+    /// A 400 means the body is wrong and will be wrong again. Repeating it
+    /// spends the little wall-clock a suspending process has on a certainty.
+    func testARejectionIsNotRetried() {
+        let session = MockSession(replies: [], fallback: .status(400))
+        let done = expectation(description: "gave up")
+
+        retryingSender(session, delays: { _ in })
+            .report(.opened, userInfo: apnsPayload()) { _ in done.fulfill() }
+
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(session.requestCount, 1)
+    }
+
+    func testOfflineIsRetried() {
+        let session = MockSession(replies: [], fallback: .offline())
+        let done = expectation(description: "gave up")
+
+        retryingSender(session, delays: { _ in })
+            .report(.bounced, userInfo: apnsPayload()) { _ in done.fulfill() }
+
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(session.requestCount, PushWebhookSender.maxAttempts)
+    }
+
+    func testRetryClassification() {
+        XCTAssertTrue(PushWebhookSender.isWorthRetrying(.retryable(status: 503, retryAfter: nil)))
+        XCTAssertTrue(PushWebhookSender.isWorthRetrying(.transport("offline")))
+        XCTAssertFalse(PushWebhookSender.isWorthRetrying(.terminal(status: 400, body: nil)))
+        XCTAssertFalse(PushWebhookSender.isWorthRetrying(.success(nil)))
     }
 }

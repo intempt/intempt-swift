@@ -11,8 +11,8 @@
 //  The wire contract is the Android SDK's, verified end to end rather than
 //  designed here:
 //
-//    android-sdk  PushNotificationWebhookRequest.kt   the eleven body fields
-//    android-sdk  ConfigManager.service.kt:56-57      POST {root}/webhooks/events/push-notification
+//    android-sdk  push/.../PushNotificationWebhookRequest.kt   the eleven body fields
+//    android-sdk  core/.../ConfigManagerService.kt:164          POST {root}/webhooks/events/push-notification
 //    gateway      PushSourceDataRoutes.java:35        route -> lb://push-source-intempt-com
 //    push-source  PushNotificationEventHandler        binds PushNotificationEvent
 //    push-source  PushNotificationEventService        status -> Type -> Kafka WebhookGeneratedEvent
@@ -26,7 +26,7 @@
 //
 //  The metadata arrives as a nested JSON OBJECT, not a string. Firebase carries
 //  flat string `data` entries so Android parses `data["metadata"]` out of a
-//  string; APNs carries real JSON and PushNotificationHandler.createApnsPayload
+//  string; APNs carries real JSON and PushNotificationHandler.createApnsPayload:352
 //  sets `root.set("metadata", ...)`. Both shapes are accepted here, because a
 //  notification service extension may hand on either.
 //
@@ -161,20 +161,43 @@ enum PushWebhookBody {
     }
 }
 
-/// Posts one report and forgets it.
+/// Posts one report, retrying a transient failure a bounded number of times.
 ///
-/// Nothing is queued or retried. A delivery report is only meaningful while the
-/// send it describes is recent, and the caller is frequently a notification
-/// service extension the system will suspend within seconds — a queue that
-/// outlives the process would be a queue that never drains.
+/// Not fire-and-forget, and not durable either. The Android SDK settled this:
+/// `WebhookService.kt` retries four times with a doubling delay because
+/// "journeys branch on these — a dropped DELIVERED makes a journey believe the
+/// push never arrived and send the wrong follow-up to a real person". That is
+/// a worse outcome than a lost analytics event, and it is the same webhook.
+///
+/// Bounded and in-process rather than routed through the durable event queue,
+/// for the reason Android gives: the queue posts a different body to a different
+/// endpoint, and a second persistence layer is a large thing to add for three
+/// reports. A retry that outlives the process would also never run — iOS
+/// suspends the app, and a notification service extension, within seconds.
+///
+/// Only a retryable outcome is retried. A 400 means the body is wrong and will
+/// be wrong again; repeating it wastes the little wall-clock the process has.
 final class PushWebhookSender {
+
+    static let maxAttempts = 4
+    static let initialRetryDelay: TimeInterval = 1
 
     private let network: Network
     private let credentials: IntemptCredentials
+    private let scheduler: (TimeInterval, @escaping () -> Void) -> Void
 
-    init(network: Network, credentials: IntemptCredentials) {
+    /// - Parameter scheduler: how a retry is deferred. Replaced in tests so the
+    ///   backoff is exercised without spending seven real seconds sleeping.
+    init(
+        network: Network,
+        credentials: IntemptCredentials,
+        scheduler: @escaping (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay, execute: work)
+        }
+    ) {
         self.network = network
         self.credentials = credentials
+        self.scheduler = scheduler
     }
 
     /// - Returns: whether a request was made. False means the payload carried no
@@ -213,14 +236,54 @@ final class PushWebhookSender {
             return false
         }
 
-        network.send(request) { outcome in
-            if !outcome.isSuccess {
-                IntemptLogger.shared.log(
-                    .warning, "push \(status.rawValue) report failed: \(outcome)")
-            }
-            completion?(outcome)
-        }
+        attempt(request, status: status, number: 1, delay: Self.initialRetryDelay, completion: completion)
         return true
+    }
+
+    private func attempt(
+        _ request: URLRequest,
+        status: PushWebhookStatus,
+        number: Int,
+        delay: TimeInterval,
+        completion: ((HTTPOutcome) -> Void)?
+    ) {
+        network.send(request) { [weak self] outcome in
+            guard let self else {
+                completion?(outcome)
+                return
+            }
+            guard !outcome.isSuccess else {
+                completion?(outcome)
+                return
+            }
+            guard Self.isWorthRetrying(outcome), number < Self.maxAttempts else {
+                IntemptLogger.shared.log(
+                    .warning,
+                    "push \(status.rawValue) report failed after \(number) "
+                        + "attempt\(number == 1 ? "" : "s"): \(outcome). A journey branching on "
+                        + "this signal will not see it.")
+                completion?(outcome)
+                return
+            }
+
+            self.scheduler(delay) {
+                self.attempt(
+                    request, status: status, number: number + 1,
+                    delay: delay * 2, completion: completion)
+            }
+        }
+    }
+
+    /// A rejection is not retried.
+    ///
+    /// `.terminal` is 400/401/403/422 — a malformed body or a bad key, identical
+    /// on the next attempt. `Network.classify` has already separated those from
+    /// the statuses worth repeating.
+    static func isWorthRetrying(_ outcome: HTTPOutcome) -> Bool {
+        switch outcome {
+        case .retryable, .transport: return true
+        case .success, .terminal: return false
+        }
     }
 }
 

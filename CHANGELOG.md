@@ -21,9 +21,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Requires single-metadata `feature/apns-destination-type` and destinations-processor #391,
   which is what puts the metadata in the payload.
 
+  Reporting stops at `optOut()`. The webhook is not routed through `track`, so it carries its
+  own gate — the body includes `masterId` and `accountId`, which identify a person.
+
+  Failed reports are retried up to four times with a doubling delay, matching the Android
+  SDK. A journey branches on these signals, so a dropped DELIVERED sends the wrong follow-up
+  to a real person. A 4xx is not retried; it will be wrong again.
+
   iOS only wakes an app for a `content-available` or `mutable-content` notification, or one
-  arriving in the foreground, so a plain alert to a backgrounded app is reported by nothing.
-  Call `trackPushReceived` from a Notification Service Extension for full delivery coverage.
+  arriving in the foreground. Intempt's own sender sets neither, so today `delivered` and
+  `bounced` fire only for foreground arrivals and a Notification Service Extension would not
+  change that. `opened` is reported for every tap.
 
 ### Changed
 

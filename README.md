@@ -290,9 +290,17 @@ One platform limit worth knowing before you read the numbers. iOS only wakes
 your app for a notification that is `content-available` or `mutable-content`, or
 that arrives while the app is in the foreground. A plain alert delivered to a
 backgrounded app is never seen by any code, so it is never reported as
-delivered. `opened` has no such limit. For delivery reporting on every push, call
-`trackPushReceived` from a Notification Service Extension and send with
-`mutable-content: 1`.
+delivered.
+
+**Today that means `delivered` and `bounced` fire only for a push that arrives
+while your app is in the foreground.** Intempt composes the APNs payload, and it
+does not currently set `mutable-content`, so a Notification Service Extension is
+never invoked for an Intempt-sent push — adding one on your side would not change
+the numbers. `opened` has no such limit and is reported for every tap.
+
+If you send Intempt pushes through your own sender and set `mutable-content: 1`,
+calling `trackPushReceived` from a service extension does give full delivery
+coverage. The call works from either process.
 
 ## Property types
 

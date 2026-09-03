@@ -75,8 +75,8 @@ enum Endpoint {
     ///
     /// Org and project are not in the path: they travel in the body, because
     /// the ids come from the notification's own payload rather than from the
-    /// SDK's configuration. A notification service extension reporting a
-    /// delivery has the payload and may not have an initialised instance.
+    /// SDK's configuration, and the report must be attributable to the send even
+    /// when the reporting process is not the one that was configured for it.
     case pushNotificationWebhook
 
     var path: String {
