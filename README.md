@@ -276,6 +276,24 @@ the destinations job finds the device.
 
 APNs only. There is no Firebase or FCM dependency at any layer.
 
+`trackPushOpen` and `trackPushReceived` do two things. They queue an analytics
+event, and they report the outcome to Intempt's push webhook so the send's own
+delivered / bounced / opened numbers move — the same webhook and the same three
+statuses the Android SDK reports. `trackPushReceived` reports `bounced` instead
+of `delivered` when notifications are denied, matching Android's
+`POST_NOTIFICATIONS` check.
+
+Neither call does anything for a notification Intempt did not send: with no
+Intempt metadata in the payload, no request is made.
+
+One platform limit worth knowing before you read the numbers. iOS only wakes
+your app for a notification that is `content-available` or `mutable-content`, or
+that arrives while the app is in the foreground. A plain alert delivered to a
+backgrounded app is never seen by any code, so it is never reported as
+delivered. `opened` has no such limit. For delivery reporting on every push, call
+`trackPushReceived` from a Notification Service Extension and send with
+`mutable-content: 1`.
+
 ## Property types
 
 `IntemptType` accepts `String`, `Int`, `UInt`, `Double`, `Float`, `Bool`,

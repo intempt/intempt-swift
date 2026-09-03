@@ -3,6 +3,34 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Push delivered / bounced / opened now reach Intempt.** `trackPushOpen` and
+  `trackPushReceived` previously emitted only analytics events, and nothing consumed them:
+  `IosSourceInitialization` provisions nine collections and none is a push collection, so
+  both events were dropped after a 201. Both calls now also POST to
+  `/webhooks/events/push-notification` — the same gateway route, the same
+  `PushNotificationEvent` body and the same three statuses the Android SDK has always used.
+  `trackPushOpen` reports `opened`; `trackPushReceived` reports `delivered`, or `bounced`
+  when notifications are denied, mirroring `FirebaseService.notifySafely`'s
+  `POST_NOTIFICATIONS` check. The analytics events still fire — this is additive.
+  `destinationType` and `subject` are `apns`, matching `DestinationTypes.APNS` and
+  `RSocketConnectorName.APNS`. A notification carrying no Intempt metadata makes no request.
+  Requires single-metadata `feature/apns-destination-type` and destinations-processor #391,
+  which is what puts the metadata in the payload.
+
+  iOS only wakes an app for a `content-available` or `mutable-content` notification, or one
+  arriving in the foreground, so a plain alert to a backgrounded app is reported by nothing.
+  Call `trackPushReceived` from a Notification Service Extension for full delivery coverage.
+
+### Changed
+
+- `Endpoint` gained `versionPrefix`, and `Network`'s default host is now the gateway root.
+  The webhook routes are registered outside `/v1`, so a single host constant could not serve
+  both families. `Endpoint.path` is unchanged and the existing wire assertions still hold.
+
 ## [0.3.0] — 2026-09-03
 
 ### Added
