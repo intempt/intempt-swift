@@ -50,7 +50,7 @@ enum EventConstants {
 /// The four endpoints a client SDK talks to, enumerated from every `fetch(`
 /// call site in intemptjs. There are no others.
 enum Endpoint {
-    /// Batched events — identify, group, alias, record, track, product all
+    /// Batched events — identify, group, record, track, product all
     /// funnel here as one mixed-type `{"track":[...]}` envelope.
     case track(org: String, project: String, sourceId: String, useIPForGeolocation: Bool)
     /// Consent is separate, unbatched and sent immediately.

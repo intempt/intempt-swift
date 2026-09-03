@@ -16,8 +16,8 @@ live here because the Swift SDK's shape is canonical, decided 2026-08-15.
 | Node | `intempt-node` | client surface only; see Server SDKs — four `choose*` methods still live, to be replaced |
 | Python | `intempt-python` | client surface only; see Server SDKs — flag surface never written |
 | PHP | `intempt-php` | client surface only; see Server SDKs — flag surface never written |
-| Java | `intempt-java` | repo created 2026-08-25; already ships the flag types on this wire vocabulary |
-| JavaScript | `intemptjs` | out of scope, predates the contract |
+| Java | `intempt-java` | repo created 2026-08-25; already ships the flag types on this wire vocabulary. **Read path only** — feature flags and personalization; no capture, identity, consent or opt-out. Not published to Maven Central and carries no release tag |
+| JavaScript | `intempt-js` | **out of scope — see below.** `intemptjs` is the same repository under its former name |
 
 The flag-surface column of this table is a summary of
 [Per-SDK state](#per-sdk-state-verified-2026-08-31-against-each-default-branch); that table is the
@@ -25,16 +25,20 @@ detail and the two are updated together. They disagreed for one revision, which 
 ended up with two different answers about Android in one file.
 
 Server SDKs conform on the shared capture surface — `track`, `identify`, `group`,
-`alias`, `consent`, `optIn` / `optOut` — and diverge structurally everywhere a server has
+`consent`, `optIn` / `optOut` — and diverge structurally everywhere a server has
 no device, session or per-user state. Those divergences are enumerated under
 [Server SDKs](#server-sdks) so nobody "fixes" them into conformance.
 
 A divergence that is *gratuitous* rather than structural is a bug, and belongs in an
 issue rather than in the table.
 
+**Every shipped SDK appears in the table above, and a new SDK does not ship without an
+entry in it.** The table is the inventory, not a summary of one — an SDK absent from it is
+an SDK nobody has decided the shape of.
+
 ## JavaScript is out of scope
 
-`intemptjs` predates this contract and is excluded from it deliberately. The reasons, so
+`intempt-js` predates this contract and is excluded from it deliberately. The reasons, so
 nobody reopens the question or "fixes" the SDK toward a shape it was never built for:
 
 1. **It ships a three-state consent model, not an opt-in/opt-out pair.** Its surface is
@@ -51,7 +55,8 @@ nobody reopens the question or "fixes" the SDK toward a shape it was never built
 
 Excluded does not mean unowned. Its published documentation must describe the API it
 actually ships, and its opt-out must persist — both are tracked as requirements against
-`intemptjs` itself rather than against this contract.
+`intempt-js` itself rather than against this contract. The cost is real: a customer using
+both the web SDK and any other one meets two different opt-out APIs.
 
 ## The server SDK surface
 
@@ -179,7 +184,6 @@ dropped — opted out, invalid property, encoding failure, storage unavailable. 
 track(eventTitle, data?) -> Bool
 identify(userId, eventTitle = "Identify", userAttributes?, data?) -> Bool
 group(accountId, eventTitle = "Identify", accountAttributes?) -> Bool
-alias(userId, anotherUserId) -> Bool
 record(eventTitle, userId?, accountId?, data?, userAttributes?, accountAttributes?) -> Bool
 ```
 

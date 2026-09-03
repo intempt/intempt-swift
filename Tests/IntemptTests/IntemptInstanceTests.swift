@@ -165,11 +165,6 @@ final class IntemptInstanceTests: XCTestCase {
         XCTAssertEqual(sdk.queuedEventCount(), 1)
     }
 
-    func testAlias() {
-        XCTAssertTrue(sdk.alias(userId: "u1", anotherUserId: "u2"))
-        XCTAssertEqual(sdk.queuedEventCount(), 1)
-    }
-
     func testRecord() {
         XCTAssertTrue(
             sdk.record(
@@ -246,7 +241,6 @@ final class IntemptInstanceTests: XCTestCase {
         XCTAssertFalse(sdk.track(eventTitle: "x"))
         XCTAssertFalse(sdk.identify(userId: "u"))
         XCTAssertFalse(sdk.group(accountId: "a"))
-        XCTAssertFalse(sdk.alias(userId: "u", anotherUserId: "v"))
         XCTAssertFalse(sdk.record(eventTitle: "r", userId: "u"))
         XCTAssertFalse(sdk.productAdd(productId: "s", quantity: 1))
         XCTAssertFalse(sdk.productView(productId: "s"))

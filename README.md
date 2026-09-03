@@ -97,7 +97,6 @@ forever is not a recovery.
 intempt.track(eventTitle: String, data: [String: IntemptType]?)
 intempt.identify(userId: String, eventTitle: String, userAttributes: [String: IntemptType]?, data: [String: IntemptType]?)
 intempt.group(accountId: String, eventTitle: String, accountAttributes: [String: IntemptType]?)
-intempt.alias(userId: String, anotherUserId: String)
 intempt.record(eventTitle: String, userId: String?, accountId: String?, data: ..., userAttributes: ..., accountAttributes: ...)
 ```
 
