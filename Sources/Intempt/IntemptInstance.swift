@@ -130,7 +130,7 @@ public final class IntemptInstance {
     let flusher: Flush
     private let personalization: Personalization
     private let flags: Flags
-    private let pushWebhook: PushWebhookSender
+    let pushWebhook: PushWebhookSender
     var automatic: AutomaticEvents!
     /// Held so its observers live as long as the instance; `deinit` removes them.
     private var lifecycle: AppLifecycle!
@@ -181,6 +181,11 @@ public final class IntemptInstance {
             network: network, credentials: credentials,
             orgId: orgId, projectId: projectId, sourceId: sourceId)
         self.pushWebhook = PushWebhookSender(network: network, credentials: credentials)
+
+        // Re-asked before every retry. The webhook's backoff outlives the call
+        // that started it, so a gate checked only at the entry point would let
+        // a report leave after `optOut()` had already returned.
+        self.pushWebhook.isPermitted = { [weak self] in self?.hasOptedOut() == false }
 
         // `automatic` needs to call back into `self`, so it is built after all
         // stored properties are initialised and captures self weakly.

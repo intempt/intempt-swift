@@ -302,6 +302,27 @@ final class PushWebhookTests: IntemptTestCase {
         XCTAssertEqual(session.requestCount, 0)
     }
 
+    /// The gate before the probe has its own effect, and without this the inner
+    /// gate covers for it: an opted-out user must not have their notification
+    /// authorization read at all. Asking is a system call about a person who has
+    /// said stop.
+    func testAnOptedOutUserIsNotEvenAskedAboutAuthorization() throws {
+        var probed = false
+        PushAuthorization.probe = {
+            probed = true
+            $0(true)
+        }
+        let session = MockSession(replies: [.ok()])
+        let instance = try instance(session)
+        instance.optOut()
+
+        _ = instance.trackPushReceived(apnsPayload())
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertFalse(probed, "opt-out must short-circuit before the probe")
+        XCTAssertEqual(session.requestCount, 0)
+    }
+
     /// Opting back in restores reporting, so the gate is a gate and not an
     /// accidental permanent disable.
     func testOptingBackInResumesReporting() throws {
@@ -399,6 +420,86 @@ final class PushWebhookTests: IntemptTestCase {
 
         retryingSender(session, delays: { _ in })
             .report(.bounced, userInfo: apnsPayload()) { _ in done.fulfill() }
+
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(session.requestCount, PushWebhookSender.maxAttempts)
+    }
+
+    /// A retry is a NEW request, and the backoff spans seven seconds. Without a
+    /// gate inside the loop, opting out during it still let three more
+    /// person-linked POSTs leave — `masterId` and `accountId` each time.
+    func testOptingOutMidBackoffAbandonsTheRemainingRetries() throws {
+        let session = MockSession(replies: [], fallback: .status(503))
+        let instance = try instance(session)
+
+        var resume: (() -> Void)?
+        let sender = PushWebhookSender(
+            network: Network(session: session),
+            credentials: try IntemptCredentials(apiKey: "pfx.secret"),
+            scheduler: { _, work in resume = work })
+        sender.isPermitted = { [weak instance] in instance?.hasOptedOut() == false }
+
+        sender.report(.delivered, userInfo: apnsPayload())
+        XCTAssertEqual(session.requestCount, 1, "first attempt has been made")
+
+        instance.optOut()
+        resume?()
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertEqual(
+            session.requestCount, 1,
+            "no further attempt may start once collection has stopped")
+    }
+
+    /// Drives the instance's OWN sender, not a locally built one, so the
+    /// `isPermitted` wiring in `IntemptInstance.init` is what is under test.
+    /// A mutation deleting that line survived every other test here.
+    func testTheInstanceWiresItsOwnSenderToOptOut() throws {
+        PushAuthorization.probe = { $0(true) }
+        let session = MockSession(replies: [], fallback: .status(503))
+        let instance = try instance(session)
+
+        var resume: (() -> Void)?
+        instance.pushWebhook.scheduler = { _, work in resume = work }
+
+        _ = instance.trackPushReceived(apnsPayload())
+        waitUntil("first attempt made") { session.requestCount == 1 }
+
+        instance.optOut()
+        resume?()
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertEqual(
+            session.requestCount, 1,
+            "the instance must gate its own sender's retries on opt-out")
+    }
+
+    /// The same path with no opt-out, so the test above is proving the gate
+    /// rather than proving the scheduler was simply never resumed.
+    func testTheInstanceSenderKeepsRetryingWhenStillCollecting() throws {
+        PushAuthorization.probe = { $0(true) }
+        let session = MockSession(replies: [], fallback: .status(503))
+        let instance = try instance(session)
+
+        var resume: (() -> Void)?
+        instance.pushWebhook.scheduler = { _, work in resume = work }
+
+        _ = instance.trackPushReceived(apnsPayload())
+        waitUntil("first attempt made") { session.requestCount == 1 }
+
+        resume?()
+        waitUntil("second attempt made") { session.requestCount == 2 }
+    }
+
+    /// The gate must not be a permanent stop for a user who never opted out.
+    func testRetriesContinueWhileCollectionIsPermitted() {
+        let session = MockSession(replies: [], fallback: .status(503))
+        var delays: [TimeInterval] = []
+        let done = expectation(description: "gave up")
+
+        let sender = retryingSender(session, delays: { delays.append($0) })
+        sender.isPermitted = { true }
+        sender.report(.delivered, userInfo: apnsPayload()) { _ in done.fulfill() }
 
         wait(for: [done], timeout: 2)
         XCTAssertEqual(session.requestCount, PushWebhookSender.maxAttempts)

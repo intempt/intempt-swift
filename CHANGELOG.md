@@ -26,7 +26,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
   Failed reports are retried up to four times with a doubling delay, matching the Android
   SDK. A journey branches on these signals, so a dropped DELIVERED sends the wrong follow-up
-  to a real person. A 4xx is not retried; it will be wrong again.
+  to a real person. Retries follow `APIConstants.retryableStatuses` — 408, 429 and 5xx — so a
+  400/401/403/422 is abandoned after one attempt, and the opt-out gate is re-asked before every
+  retry, not only before the first send.
 
   iOS only wakes an app for a `content-available` or `mutable-content` notification, or one
   arriving in the foreground. Intempt's own sender sets neither, so today `delivered` and

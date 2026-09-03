@@ -184,7 +184,22 @@ final class PushWebhookSender {
 
     private let network: Network
     private let credentials: IntemptCredentials
-    private let scheduler: (TimeInterval, @escaping () -> Void) -> Void
+    /// Internal rather than private so a test can drive the instance's OWN
+    /// sender. A test that builds its own `PushWebhookSender` cannot tell
+    /// whether `IntemptInstance` wired one up correctly — a mutation deleting
+    /// that wiring survived until this seam existed.
+    var scheduler: (TimeInterval, @escaping () -> Void) -> Void
+
+    /// Re-asked before every retry, not just before the first send.
+    ///
+    /// A retry is a NEW request, not one already in flight, and the backoff
+    /// spans seven seconds — long enough for someone to opt out inside it. A
+    /// gate checked once at the top would let three more person-linked POSTs
+    /// leave after `optOut()` returned.
+    ///
+    /// Set by `IntemptInstance` after its own stored properties exist, which is
+    /// why it is a `var` rather than an init parameter.
+    var isPermitted: () -> Bool = { true }
 
     /// - Parameter scheduler: how a retry is deferred. Replaced in tests so the
     ///   backoff is exercised without spending seven real seconds sleeping.
@@ -267,6 +282,13 @@ final class PushWebhookSender {
             }
 
             self.scheduler(delay) {
+                guard self.isPermitted() else {
+                    IntemptLogger.shared.log(
+                        .debug,
+                        "push \(status.rawValue) report abandoned mid-retry: collection stopped")
+                    completion?(outcome)
+                    return
+                }
                 self.attempt(
                     request, status: status, number: number + 1,
                     delay: delay * 2, completion: completion)
