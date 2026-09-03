@@ -3,7 +3,21 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] — 2026-09-03
+
+### Added
+
+- **`useIPAddressForGeolocation` — an init-time opt-out for server-side geolocation.**
+  `intempt/push-source-service#439` began deriving country, region and city at ingestion
+  from the address the request already arrives on, on by default for every SDK. This adds
+  the other half: a way to decline. `IntemptInstance.initialize(..., useIPAddressForGeolocation:
+  false)` sends `?ip=0` on the track endpoint instead of `?ip=1`; the device never reads or
+  sends its own address either way, and the platform discards the connection address after
+  resolving it. Named after mixpanel-swift's option of the same name.
+- **`PrivacyInfo.xcprivacy` now declares `NSPrivacyCollectedDataTypeCoarseLocation`.** The
+  derived country/region/city is persisted and queryable, which is what Apple's privacy
+  manifest rules mean by "collected", even though the IP itself is never stored.
+  `PreciseLocation` is deliberately absent — nothing here touches CoreLocation.
 
 ### Removed
 
@@ -15,6 +29,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   real people and there is no unmerge. `identify` is unchanged and remains the stitch
   trigger. `docs/CONTRACT.md` still lists the `alias` wire type because ingestion still
   accepts it; only the client surface is gone.
+
+### Docs
+
+- `docs/SDK-API-CONTRACT.md`'s SDK inventory now lists `intempt-java` and corrects the
+  JavaScript SDK's repo name from `intemptjs` (former name) to `intempt-js`, with the
+  reasons it stays out of the cross-SDK contract recorded rather than implied.
 
 ## [0.2.0] — 2026-08-31
 
