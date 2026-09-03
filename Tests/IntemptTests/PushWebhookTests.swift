@@ -36,9 +36,9 @@ final class PushWebhookTests: IntemptTestCase {
     private func fcmShapedPayload() -> [AnyHashable: Any] {
         [
             "metadata": """
-                {"orgId":"1","projectId":"2","destinationId":"3","masterId":"4",\
-                "accountId":"5","pipelineId":"6","transformerId":"7","templateId":"8"}
-                """
+            {"orgId":"1","projectId":"2","destinationId":"3","masterId":"4",\
+            "accountId":"5","pipelineId":"6","transformerId":"7","templateId":"8"}
+            """
         ]
     }
 
