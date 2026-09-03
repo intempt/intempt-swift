@@ -33,6 +33,26 @@ public final class IntemptInstance {
 
     /// Creates or returns the named instance.
     ///
+    /// - Parameter useIPAddressForGeolocation: Whether Intempt may derive country, region and city
+    ///   from the address the request already arrives on. Default `true`, matching mixpanel-swift's
+    ///   `useIPAddressForGeolocation`.
+    ///
+    ///   The SDK never reads or sends the device's address itself -- it sends `?ip=1` or `?ip=0`,
+    ///   and the platform resolves it from the connection against a local database and discards it
+    ///   before storing anything. No third party is involved.
+    ///
+    ///   Leaving this on means the app collects **Coarse Location**, because the derived
+    ///   country/region/city is stored. Apple's rule is that anything derived from data you send
+    ///   off device counts separately from the data itself, so the app's own privacy label must say
+    ///   so. Setting it to `false` stops the derivation.
+    ///
+    ///   It does NOT change what this SDK's privacy manifest declares. `PrivacyInfo.xcprivacy`
+    ///   lists Coarse Location unconditionally, and Apple merges a dependency's manifest into the
+    ///   app's label whatever the app passes here — a manifest is static and cannot read a runtime
+    ///   argument. An app that sets `false` and expects the label to change will be surprised at
+    ///   review. Declaring a category the app may not exercise is the safe direction; claiming one
+    ///   it does exercise is not.
+    ///
     /// - Throws: `IntemptError.malformedAPIKey` if the key is not
     ///   `prefix.secret`; `IntemptError.missingConfiguration` if any
     ///   identifier is blank.
@@ -42,7 +62,8 @@ public final class IntemptInstance {
         orgId: String,
         projectId: String,
         sourceId: String,
-        instanceName: String = "default"
+        instanceName: String = "default",
+        useIPAddressForGeolocation: Bool = true
     ) throws -> IntemptInstance {
         let credentials = try IntemptCredentials(apiKey: apiKey)
         for (value, field) in [(orgId, "orgId"), (projectId, "projectId"), (sourceId, "sourceId")] {
@@ -55,10 +76,26 @@ public final class IntemptInstance {
         AutomaticProperties.warm()
 
         return instancesLock.write {
-            if let existing = instances[instanceName] { return existing }
+            if let existing = instances[instanceName] {
+                // Idempotent by design, but the geolocation flag is a privacy decision and
+                // dropping it silently fails in the unsafe direction. "Initialise at launch,
+                // initialise again after the consent banner" is the ordinary shape, and it
+                // used to leave collection on with no signal of any kind.
+                if existing.useIPAddressForGeolocation != useIPAddressForGeolocation {
+                    IntemptLogger.shared.log(
+                        .warning,
+                        "initialize(instanceName: \(instanceName)) asked for "
+                            + "useIPAddressForGeolocation: \(useIPAddressForGeolocation) but that "
+                            + "instance already exists with "
+                            + "\(existing.useIPAddressForGeolocation). The existing value stands. "
+                            + "Pass it on the first initialize, or use a separate instanceName.")
+                }
+                return existing
+            }
             let created = IntemptInstance(
                 credentials: credentials, orgId: orgId, projectId: projectId,
-                sourceId: sourceId, instanceName: instanceName)
+                sourceId: sourceId, instanceName: instanceName,
+                useIPAddressForGeolocation: useIPAddressForGeolocation)
             instances[instanceName] = created
             created.automatic.checkVersion()
             created.flusher.startTimer()
@@ -101,17 +138,28 @@ public final class IntemptInstance {
     private let stateQueue: DispatchQueue
     private var optedOut = false
 
+    /// Whether this instance lets Intempt derive country, region and city from the address its
+    /// requests arrive on.
+    ///
+    /// `public` deliberately. `initialize` is idempotent, so a second call asking for a different
+    /// value keeps the first — and the logger is silent by default, which left an integrator with
+    /// no way at all to find out which value is in force. A privacy decision a caller cannot read
+    /// back is one they cannot verify.
+    public let useIPAddressForGeolocation: Bool
+
     private init(
         credentials: IntemptCredentials,
         orgId: String,
         projectId: String,
         sourceId: String,
         instanceName: String,
+        useIPAddressForGeolocation: Bool = true,
         storeOverride: UserDefaults = .standard,
         databaseDirectory: URL? = nil,
         network: Network = Network()
     ) {
         self.credentials = credentials
+        self.useIPAddressForGeolocation = useIPAddressForGeolocation
         self.orgId = orgId
         self.projectId = projectId
         self.sourceId = sourceId
@@ -123,7 +171,8 @@ public final class IntemptInstance {
         self.network = network
         self.flusher = Flush(
             db: db, network: network, credentials: credentials,
-            orgId: orgId, projectId: projectId, sourceId: sourceId)
+            orgId: orgId, projectId: projectId, sourceId: sourceId,
+            useIPAddressForGeolocation: useIPAddressForGeolocation)
         self.personalization = Personalization(
             network: network, credentials: credentials,
             orgId: orgId, projectId: projectId, sourceId: sourceId)
