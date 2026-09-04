@@ -579,14 +579,41 @@ final class PushWebhookTests: IntemptTestCase {
         }
     #endif
 
-    /// The gate now covers the first attempt too, not only the retries.
+    /// The gate covers the first attempt, not only the retries.
     func testNothingIsSentAtAllWhenPermissionIsWithdrawn() {
         let session = MockSession(replies: [.ok()])
         let sender = sender(session)
         sender.isPermitted = { false }
 
-        XCTAssertTrue(sender.report(.opened, userInfo: apnsPayload()), "metadata parsed")
+        XCTAssertTrue(
+            sender.report(.opened, userInfo: apnsPayload()),
+            "the return value reports whether the payload was ours, not whether it was sent")
         XCTAssertEqual(session.requestCount, 0, "not even the first attempt may go out")
+    }
+
+    /// Pins the documented split between the return value and the completion.
+    /// The return value says "this was an Intempt push"; the completion says "a
+    /// request reached the network". A gated report is true and silent.
+    func testAGatedReportNeverCallsItsCompletion() {
+        let session = MockSession(replies: [.ok()])
+        let sender = sender(session)
+        sender.isPermitted = { false }
+
+        var completed = false
+        sender.report(.opened, userInfo: apnsPayload()) { _ in completed = true }
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertFalse(completed, "nothing reached the network, so there is no outcome to report")
+        XCTAssertEqual(session.requestCount, 0)
+    }
+
+    /// The same call, ungated, must reach the completion — otherwise the test
+    /// above passes for the wrong reason.
+    func testAPermittedReportDoesCallItsCompletion() {
+        let session = MockSession(replies: [.ok()])
+        let done = expectation(description: "completed")
+        sender(session).report(.opened, userInfo: apnsPayload()) { _ in done.fulfill() }
+        wait(for: [done], timeout: 2)
     }
 
     func testRetryClassification() {

@@ -215,9 +215,14 @@ final class PushWebhookSender {
         self.scheduler = scheduler
     }
 
-    /// - Returns: whether a request was made. False means the payload carried no
-    ///   usable metadata, which is the normal answer for a notification Intempt
-    ///   did not send.
+    /// - Returns: whether the payload was recognised as an Intempt push. False is
+    ///   the normal answer for a notification Intempt did not send.
+    ///
+    ///   NOT whether a request was made — an opted-out user returns `true` and
+    ///   sends nothing, because the opt-out gate lives further in, at every
+    ///   attempt. Callers that need to know a request actually left must use
+    ///   `completion`, which is invoked once per report that reaches the network
+    ///   and not at all for one the gate refuses.
     @discardableResult
     func report(
         _ status: PushWebhookStatus,
