@@ -3,6 +3,45 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Push delivered / bounced / opened now reach Intempt.** `trackPushOpen` and
+  `trackPushReceived` previously emitted only analytics events, and nothing consumed them:
+  `IosSourceInitialization` provisions nine collections and none is a push collection, so
+  both events were dropped after a 201. Both calls now also POST to
+  `/webhooks/events/push-notification` — the same gateway route, the same
+  `PushNotificationEvent` body and the same three statuses the Android SDK has always used.
+  `trackPushOpen` reports `opened`; `trackPushReceived` reports `delivered`, or `bounced`
+  when the system will not display the notification. That means denied AND never-asked, which
+  is what Android's `checkSelfPermission(POST_NOTIFICATIONS) == PERMISSION_GRANTED` means:
+  only granted counts, and a user who has never been prompted is not granted. The analytics events still fire — this is additive.
+  `destinationType` and `subject` are `apns`, matching `DestinationTypes.APNS` and
+  `RSocketConnectorName.APNS`. A notification carrying no Intempt metadata makes no request.
+  Requires single-metadata `feature/apns-destination-type` and destinations-processor #391,
+  which is what puts the metadata in the payload.
+
+  Reporting stops at `optOut()`. The webhook is not routed through `track`, so it carries its
+  own gate — the body includes `masterId` and `accountId`, which identify a person.
+
+  Failed reports are retried up to four times with a doubling delay, matching the Android
+  SDK. A journey branches on these signals, so a dropped DELIVERED sends the wrong follow-up
+  to a real person. Retries follow `APIConstants.retryableStatuses` — 408, 429 and 5xx — so a
+  400/401/403/422 is abandoned after one attempt, and the opt-out gate is re-asked before every
+  retry, not only before the first send.
+
+  iOS only wakes an app for a `content-available` or `mutable-content` notification, or one
+  arriving in the foreground. Intempt's own sender sets neither, so today `delivered` and
+  `bounced` fire only for foreground arrivals and a Notification Service Extension would not
+  change that. `opened` is reported for every tap.
+
+### Changed
+
+- `Endpoint` gained `versionPrefix`, and `Network`'s default host is now the gateway root.
+  The webhook routes are registered outside `/v1`, so a single host constant could not serve
+  both families. `Endpoint.path` is unchanged and the existing wire assertions still hold.
+
 ## [0.3.0] — 2026-09-03
 
 ### Added
