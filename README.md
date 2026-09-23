@@ -260,6 +260,13 @@ intempt.autocapture.configure(AutocaptureOptions(
 Off by default, and **nothing is swizzled until `start()`**. `.all` turns on all
 five; `.none` is the other preset.
 
+**What a user types is never captured.** The contents of a `UITextField` or `UITextView`
+are never read, and a secure text field is skipped entirely. An *Edit Field* event says a
+field changed, not what it changed to. A button's title and a switch's state still come
+through. To send a typed value on purpose, pass it in `track()` or `record()`. This is the
+same rule the web and Android SDKs follow: see
+[Autocapture and automatic events](https://docs.intempt.com/api/sdk/autocapture).
+
 ### Push (APNs)
 
 ```swift
