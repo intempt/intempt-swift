@@ -19,7 +19,7 @@ jobs:
   # Runs without install so it cannot be skipped.
   bucketing:
     name: Server-only bucketing
-    runs-on: intempt-ubuntu-github-runner
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -283,7 +283,7 @@ jobs:
 
   license:
     name: attribution present
-    runs-on: intempt-ubuntu-github-runner
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # Apache 2.0 §4(b) requires the modification notices, and §4(d) requires
@@ -323,7 +323,7 @@ jobs:
 
   all-green:
     name: all-green
-    runs-on: intempt-ubuntu-github-runner
+    runs-on: ubuntu-latest
     needs: [test, compile-matrix, demo, lint, license, podspec, mutation, perf]
     if: always()
     steps:
