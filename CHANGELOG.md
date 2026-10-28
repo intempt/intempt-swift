@@ -3,6 +3,16 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **USER-input feeds return the profile's products again (INT-5952).** `products(feedId:)`
+  sent the profile as a flat `profileId`, a field the audience-service `FeedRequest` does not
+  have: it was dropped, the profile was never resolved and every USER-input feed (recently
+  viewed, ...) answered `{"products":[]}`. The body now carries `id` + `type: "profile"`, the
+  shape the backend resolves and intemptjs and intempt-android already send.
+
 ## [0.4.0] — 2026-09-08
 
 ### Added

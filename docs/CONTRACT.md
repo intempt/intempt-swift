@@ -126,11 +126,18 @@ mistake, and the two corrections above are both instances of it.
 
 ## `POST /{org}/projects/{project}/feeds/{feedId}/data`
 
-Flat body — **not** `identification`-wrapped, unlike `choose-api`:
+Flat body — **not** `identification`-wrapped, unlike `choose-api`. The profile
+is sent as `id` + `type: "profile"` (audience-service `FeedRequest`; intemptjs and
+intempt-android send the same body):
 
 ```json
-{"profileId":"…","sourceId":"…","limit":10,"fields":["title","price","imageUrl"],"productId":"…"}
+{"id":"…","type":"profile","sourceId":"…","limit":10,"fields":["title","price","imageUrl"],"productId":"…"}
 ```
+
+`FeedRequest` has no `profileId` field. A flat `profileId` is silently dropped:
+the profile is never resolved and a `USER`-input feed returns **200 with an empty
+`products` array** (INT-5952). `type` is required whenever `id` is set
+(`user`, `account` or `profile`).
 
 Returns **200** with `{"products":[…]}`.
 
@@ -159,7 +166,7 @@ unfielded request. A caller must pass `fields` explicitly to widen it.
 | `feedInput` | Requires |
 |---|---|
 | `NO_INPUT` | nothing |
-| `USER` | `profileId` |
+| `USER` | `id` + `type: "profile"` |
 | `PRODUCT` | `productId` |
 
 A `PRODUCT` feed called without `productId` returns **200 with an empty

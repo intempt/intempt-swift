@@ -15,8 +15,12 @@
 //      our plan had an `optimizationType` discriminator and a `names` array;
 //      neither exists. The live endpoint 400s with "Identification is required"
 //      when the wrapper is missing.
-//    - feeds/{id}/data takes a FLAT body — profileId and sourceId at the top
-//      level, NOT identification-wrapped. The two endpoints genuinely differ.
+//    - feeds/{id}/data takes a FLAT body, NOT identification-wrapped. The
+//      profile goes as `id` + `type: "profile"` next to `sourceId` (the
+//      audience-service FeedRequest; intemptjs and intempt-android send the
+//      same). FeedRequest has no `profileId` field: a flat `profileId` is
+//      dropped, the profile is never resolved and USER-input feeds come back
+//      empty (INT-5952). The two endpoints genuinely differ.
 //    - `fields` is defaulted, never omitted. A feed request without it returns
 //      every column, including raw ML embedding vectors: 222,919 bytes versus
 //      503 for the same 10 products. 443x, on a cellular connection, for a
@@ -85,8 +89,10 @@ final class Personalization {
         // the same as absent — and absent means embedding vectors. Fall back.
         let resolved = fields.isEmpty ? Self.defaultFields : fields
 
+        // `id` + `type`, not `profileId`: see the header note.
         var body: [String: Any] = [
-            "profileId": profileId,
+            "id": profileId,
+            "type": "profile",
             "sourceId": sourceId,
             "limit": max(1, count),
             "fields": resolved,
