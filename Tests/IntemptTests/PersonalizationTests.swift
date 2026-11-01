@@ -75,6 +75,11 @@ final class PersonalizationTests: IntemptTestCase {
     /// feeds/{id}/data takes a FLAT body. choose-api nests under
     /// `identification`. The two endpoints really do differ, and sending one
     /// shape to the other's endpoint fails.
+    ///
+    /// The profile goes as `id` + `type: "profile"` (audience-service
+    /// `FeedRequest`, the same body intemptjs and intempt-android send). The
+    /// server has no `profileId` field: it dropped it, never resolved the
+    /// profile and served USER-input feeds an empty list (INT-5952).
     func testProductsBodyIsFlatNotIdentificationWrapped() {
         let client = makeClient()
         let done = expectation(description: "products")
@@ -85,7 +90,9 @@ final class PersonalizationTests: IntemptTestCase {
 
         let body = session.bodies[0]
         XCTAssertNil(body["identification"], "feeds does NOT use the identification wrapper")
-        XCTAssertEqual(body["profileId"] as? String, "pr_1")
+        XCTAssertEqual(body["id"] as? String, "pr_1")
+        XCTAssertEqual(body["type"] as? String, "profile")
+        XCTAssertNil(body["profileId"], "FeedRequest has no profileId field; the server ignores it")
         XCTAssertEqual(body["sourceId"] as? String, "42")
         XCTAssertEqual(body["limit"] as? Int, 3)
     }
