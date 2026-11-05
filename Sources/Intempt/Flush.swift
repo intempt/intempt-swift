@@ -31,7 +31,8 @@
 //    5. CONSENT GOES FIRST, ON ITS OWN ENDPOINT. A withdrawal reaching the
 //       server matters more than analytics throughput. A *terminal* consent
 //       failure does not block events, though — a consent-specific
-//       misconfiguration must not strand every event in the queue.
+//       misconfiguration must not strand every event in the queue. A consent
+//       rejected 400/413/422 three times running is dropped, like a batch.
 //
 //    6. NO GZIP. Upstream compresses. Verified against production: the
 //       endpoint returns HTTP 400 for `Content-Encoding: gzip`
@@ -309,6 +310,43 @@ final class Flush {
         strikes.removeValue(forKey: head)
     }
 
+    /// Consecutive terminal rejections for a consent record, by row id.
+    private var consentStrikes: [Int32: Int] = [:]
+
+    /// `recordTerminal` for a consent record: the same statuses and the same
+    /// three strikes, so a consent the server will never accept stops being
+    /// resent on every flush and launch. 401 and 403 stay exempt, and so does
+    /// every retryable failure: a withdrawal must never be lost to a bad key
+    /// or an outage.
+    ///
+    /// - Returns: whether the record was dropped.
+    private func recordConsentTerminal(_ outcome: HTTPOutcome, id: Int32) -> Bool {
+        guard case .terminal(let status, let body) = outcome,
+            Self.payloadRejections.contains(status)
+        else { return false }
+
+        let count = (consentStrikes[id] ?? 0) + 1
+        consentStrikes[id] = count
+
+        guard count >= Self.maxStrikes else {
+            IntemptLogger.shared.log(
+                .warning,
+                "consent rejected with \(status) (attempt \(count)/\(Self.maxStrikes)); keeping")
+            return false
+        }
+
+        let detail =
+            IntemptError.serverMessages(from: body)?.joined(separator: "; ")
+            ?? "no message"
+        IntemptLogger.shared.log(
+            .error,
+            "dropping consent record after \(count) rejections with \(status): \(detail). "
+                + "It will never be accepted; keeping it would block every consent behind it.")
+        db.delete(.consents, ids: [id])
+        consentStrikes.removeValue(forKey: id)
+        return true
+    }
+
     // MARK: - Consents
 
     /// One request per consent record — the endpoint takes a flat body, not a
@@ -343,11 +381,13 @@ final class Flush {
                 switch self.policy.apply(outcome) {
                 case .deleteBatch:
                     self.db.delete(.consents, ids: [row.id])
+                    self.consentStrikes.removeValue(forKey: row.id)
                     self.drainConsents(done: done)
 
                 case .keepAndRetry:
                     // Server-side or transport trouble: events would fail too.
                     self.db.setFlag(.consents, ids: [row.id], to: false)
+                    self.consentStrikes.removeValue(forKey: row.id)
                     done()
 
                 case .keepAndStop:
@@ -355,7 +395,11 @@ final class Flush {
                     // consent. Keep the record, but let events proceed rather
                     // than stranding the entire queue behind it.
                     self.db.setFlag(.consents, ids: [row.id], to: false)
-                    done()
+                    // Consents drain one at a time, oldest first, so a record
+                    // the server will never accept blocks every consent behind
+                    // it, a later withdrawal included. Once dropped, move on.
+                    guard self.recordConsentTerminal(outcome, id: row.id) else { return done() }
+                    self.drainConsents(done: done)
                 }
             }
         }
@@ -369,6 +413,7 @@ final class Flush {
     /// batch is deleted can never match again and would accumulate for the life
     /// of the process.
     var trackedStrikeCount: Int { queue.sync { strikes.count } }
+    var trackedConsentStrikeCount: Int { queue.sync { consentStrikes.count } }
     /// Reads the intent flag, not the `Timer` — see `startTimer`.
     var isTimerRunning: Bool { timerLock.read { armed } }
 }

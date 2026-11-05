@@ -525,4 +525,139 @@ extension FlushTests {
         }
         XCTAssertEqual(db.count(.events), 0)
     }
+
+    // MARK: - Consent rejections (INT-5956)
+
+    private func seedConsent(_ action: String) {
+        db.insert(.consents, data: JSONHandler.encodeAPIData(["action": action])!)
+    }
+
+    private func consentRequests() -> [[String: Any]] {
+        zip(session.requests, session.bodies)
+            .filter { $0.0.url!.absoluteString.hasSuffix("/consents/data") }
+            .map(\.1)
+    }
+
+    /// A consent the server rejects as malformed used to be resent on every
+    /// flush and every launch, forever: the batch strike-drop never applied to
+    /// consents. The duration-as-validUntil defect produced exactly such a
+    /// record for every consent the SDK sent.
+    func testRepeatedConsentRejectionsEventuallyDropTheRecord() {
+        seedConsent("accept")
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let flush = makeFlush(
+            fallback: .serverError(400, "Field validUntil is out of range"), now: { now })
+        let step = { now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1) }
+
+        _ = flushSync(flush)
+        XCTAssertEqual(db.count(.consents), 1, "strike 1: kept")
+        step()
+
+        _ = flushSync(flush)
+        XCTAssertEqual(db.count(.consents), 1, "strike 2: kept")
+        step()
+
+        _ = flushSync(flush)
+        XCTAssertEqual(db.count(.consents), 0, "strike 3: dropped, or it is resent forever")
+        XCTAssertEqual(flush.trackedConsentStrikeCount, 0, "the dropped record's entry is released")
+        XCTAssertEqual(consentRequests().count, 3)
+    }
+
+    func testTheDropIsLoggedAtErrorWithTheServersMessage() {
+        let sink = CollectingLogger()
+        IntemptLogger.shared.addLogging(sink)
+        IntemptLogger.shared.enable(.error)
+        defer {
+            IntemptLogger.shared.removeAllLogging()
+            IntemptLogger.shared.disableAllLevels()
+        }
+        seedConsent("accept")
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let flush = makeFlush(
+            fallback: .serverError(422, "Field validUntil is out of range"), now: { now })
+
+        for _ in 1...3 {
+            _ = flushSync(flush)
+            now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
+        }
+
+        XCTAssertEqual(db.count(.consents), 0)
+        XCTAssertTrue(
+            sink.messages.contains { $0.contains("dropping consent record") && $0.contains("validUntil") },
+            "the drop names the server's reason, at error level: \(sink.messages)")
+    }
+
+    /// Consents drain oldest first, one at a time, and a terminal failure ends
+    /// the pass. A poisoned head therefore blocked every consent behind it —
+    /// a later withdrawal included — until it was dropped.
+    func testAConsentBehindARejectedOneIsSentOnceTheHeadIsDropped() {
+        seedConsent("accept")
+        seedConsent("reject")
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let flush = makeFlush(
+            replies: [
+                .serverError(400, "malformed"), .serverError(400, "malformed"),
+                .serverError(400, "malformed"),
+            ],
+            fallback: .ok(), now: { now })
+
+        for _ in 1...3 {
+            _ = flushSync(flush)
+            now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
+        }
+        XCTAssertEqual(db.count(.consents), 1, "only the rejected head is dropped")
+        XCTAssertEqual(
+            consentRequests().map { $0["action"] as? String }, ["accept", "accept", "accept"],
+            "nothing behind the head is sent while it is still being retried")
+
+        _ = flushSync(flush)
+        XCTAssertEqual(db.count(.consents), 0, "the withdrawal behind it now reaches the server")
+        XCTAssertEqual(consentRequests().last?["action"] as? String, "reject")
+    }
+
+    /// The SDK-5 exemptions: a bad key or an outage is not evidence the record
+    /// is bad, and a withdrawal must never be lost to either.
+    func testAConsentIsNeverDroppedForUnauthorizedForbiddenOrServerErrors() {
+        for status in [401, 403, 500, 503] {
+            db.deleteAll(.consents)
+            seedConsent("reject")
+            var now = Date(timeIntervalSince1970: 1_700_000_000)
+            let flush = makeFlush(fallback: .status(status), now: { now })
+
+            for attempt in 1...5 {
+                _ = flushSync(flush)
+                now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
+                XCTAssertEqual(
+                    db.count(.consents), 1,
+                    "\(status), attempt \(attempt): a withdrawal must never be lost")
+            }
+            XCTAssertGreaterThanOrEqual(
+                consentRequests().count, 5, "\(status): each attempt must reach the server")
+            XCTAssertEqual(flush.trackedConsentStrikeCount, 0, "\(status) is not a strike")
+        }
+    }
+
+    /// Strikes are consecutive: a success or a retryable failure in between
+    /// starts the count again, as it does for a batch.
+    func testAnInterruptedRunOfRejectionsStartsTheCountAgain() {
+        seedConsent("reject")
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let flush = makeFlush(
+            replies: [
+                .serverError(400, "blip"), .serverError(400, "blip"), .status(503),
+                .serverError(400, "blip"), .serverError(400, "blip"),
+            ],
+            fallback: .ok(), now: { now })
+
+        for _ in 1...5 {
+            _ = flushSync(flush)
+            now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
+            XCTAssertEqual(db.count(.consents), 1, "never three rejections in a row, so kept")
+        }
+        XCTAssertEqual(flush.trackedConsentStrikeCount, 1)
+
+        _ = flushSync(flush)
+        XCTAssertEqual(db.count(.consents), 0, "then accepted and deleted")
+        XCTAssertEqual(flush.trackedConsentStrikeCount, 0)
+    }
 }
