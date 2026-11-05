@@ -5,6 +5,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Push reports from a journey send are addressed to its run (INT-5960).** destinations-processor
+  stamps `runId` and `subrunId` into the push metadata of every journey send, and a journey waiting
+  on the push's outcome only accepts a report addressed to its run. `PushMetadata` read only the
+  eight campaign ids, so the delivered / bounced / opened webhook went out without them. Both are
+  now read (optional, same string/number rules as the other ids) and sent when present; a send
+  outside a journey keeps the same eleven-field body.
+
 ## [0.4.1] — 2026-11-02
 
 ### Fixed
