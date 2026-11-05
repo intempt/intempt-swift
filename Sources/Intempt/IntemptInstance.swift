@@ -396,6 +396,9 @@ public final class IntemptInstance {
 
     /// Records the answer AND enforces it. `.reject` runs the same gate as
     /// `optOut()`: collection stops and queued events are purged.
+    ///
+    /// - Parameter validUntil: how long the answer holds, in SECONDS from now.
+    ///   Sent as the absolute expiry in epoch milliseconds; `0` expires now.
     @discardableResult
     public func consent(
         action: ConsentAction,
@@ -409,7 +412,7 @@ public final class IntemptInstance {
             profileId: identity.profileId,
             sourceId: sourceId,
             source: Self.platformName,
-            validUntil: validUntil,
+            validUntil: ConsentModel.expiry(after: validUntil, from: Date()),
             email: email, message: message, category: category)
 
         // Consent is transmitted even when opted out — a withdrawal must reach

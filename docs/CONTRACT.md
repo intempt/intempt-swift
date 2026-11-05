@@ -62,10 +62,19 @@ upstream mixpanel-swift's gzip path would have made every single request fail.
 Flat body, not batched, not wrapped in a `track` envelope:
 
 ```json
-{"action":"accept","profileId":"…","sourceId":"…","source":"ios","validUntil":31536000}
+{"action":"accept","profileId":"…","sourceId":"…","source":"ios","validUntil":1793000000000}
 ```
 
-Returns **200**.
+`validUntil` is the absolute expiry in **epoch milliseconds**, or `-1` for unlimited. The public
+API takes a duration in seconds (`consent(action:validUntil:)`) and the SDK sends
+`(now + duration) × 1000`, so `0` expires now.
+
+Returns **200** when push-source accepts it. Since `ConsentService.normalizeValidUntil`
+(push-source fa775720, 2026-10-16) it returns **400** for a `validUntil` that is not
+`unlimited`, `-1`, empty, an epoch in seconds or milliseconds between 2010 and 2040, or an ISO-8601
+date. A raw duration such as `31536000`, or `0`, is a 400. Before INT-5956 the SDK sent exactly
+that. A consent rejected 400/413/422 three times in a row is dropped with an error log; 401, 403
+and 5xx are kept and retried.
 
 ## `POST /{org}/projects/{project}/optimization/choose-api`
 
