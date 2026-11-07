@@ -660,4 +660,32 @@ extension FlushTests {
         XCTAssertEqual(db.count(.consents), 0, "then accepted and deleted")
         XCTAssertEqual(flush.trackedConsentStrikeCount, 0)
     }
+
+    /// A 401 or 403 in between breaks the run too: it is no rejection of the
+    /// record, so the count starts again after it.
+    func testAnUnauthorizedOrForbiddenReplyStartsTheCountAgain() {
+        for status in [401, 403] {
+            db.deleteAll(.consents)
+            seedConsent("accept")
+            var now = Date(timeIntervalSince1970: 1_700_000_000)
+            let flush = makeFlush(
+                replies: [
+                    .serverError(400, "blip"), .serverError(400, "blip"), .status(status),
+                    .serverError(400, "blip"), .serverError(400, "blip"),
+                ],
+                fallback: .ok(), now: { now })
+
+            for attempt in 1...5 {
+                _ = flushSync(flush)
+                now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
+                XCTAssertEqual(
+                    db.count(.consents), 1,
+                    "\(status), attempt \(attempt): never three rejections in a row, so kept")
+            }
+            XCTAssertEqual(flush.trackedConsentStrikeCount, 1, "\(status): two strikes since the break")
+
+            _ = flushSync(flush)
+            XCTAssertEqual(db.count(.consents), 0, "\(status): then accepted and deleted")
+        }
+    }
 }

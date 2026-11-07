@@ -321,9 +321,12 @@ final class Flush {
     ///
     /// - Returns: whether the record was dropped.
     private func recordConsentTerminal(_ outcome: HTTPOutcome, id: Int32) -> Bool {
-        guard case .terminal(let status, let body) = outcome,
-            Self.payloadRejections.contains(status)
-        else { return false }
+        guard case .terminal(let status, let body) = outcome else { return false }
+        guard Self.payloadRejections.contains(status) else {
+            // A 401 or 403 in between breaks the run: strikes count consecutive rejections.
+            consentStrikes.removeValue(forKey: id)
+            return false
+        }
 
         let count = (consentStrikes[id] ?? 0) + 1
         consentStrikes[id] = count
