@@ -101,6 +101,26 @@ final class ModelsTests: XCTestCase {
 
     // MARK: Consent
 
+    /// INT-5956: the public API takes a validity DURATION; the endpoint takes an
+    /// absolute epoch in milliseconds. 31536000 and 0 sent raw are both 400s.
+    func testConsentExpiryIsTheDurationFromNowInEpochMilliseconds() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+        XCTAssertEqual(ConsentModel.expiry(after: 31_536_000, from: now), 1_731_536_000_000)
+        XCTAssertEqual(
+            ConsentModel.expiry(after: 0, from: now), 1_700_000_000_000,
+            "a 0 withdrawal expires now, an epoch the server accepts")
+        XCTAssertEqual(ConsentModel.expiry(after: 1.5, from: now), 1_700_000_001_500)
+    }
+
+    func testAConsentExpiryNoEpochCanHoldIsUnlimited() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+        XCTAssertEqual(ConsentModel.expiry(after: .infinity, from: now), -1)
+        XCTAssertEqual(ConsentModel.expiry(after: .nan, from: now), -1)
+        XCTAssertEqual(ConsentModel.expiry(after: .greatestFiniteMagnitude, from: now), -1)
+    }
+
     func testConsentFieldSetAndPlatformSource() {
         let m = ConsentModel(
             action: .reject, profileId: "p1", sourceId: "src1", source: "ios",

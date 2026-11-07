@@ -290,6 +290,33 @@ final class IntemptInstanceTests: XCTestCase {
         XCTAssertEqual(payload["category"] as? String, "marketing")
     }
 
+    /// INT-5956: the stored record carries the absolute expiry in epoch ms,
+    /// as an integer, not the raw duration.
+    func testConsentSendsTheExpiryAsEpochMilliseconds() throws {
+        let before = Int64((Date().timeIntervalSince1970 * 1000).rounded(.down))
+        sdk.consent(action: .accept, validUntil: 31_536_000)
+        sdk.consent(action: .reject, validUntil: 0)
+        let after = Int64((Date().timeIntervalSince1970 * 1000).rounded(.up))
+
+        let rows = sdk.db.read(.consents, limit: 2)
+        XCTAssertEqual(rows.count, 2)
+
+        let accept = try XCTUnwrap(JSONHandler.deserializeData(rows[0].data) as? [String: Any])
+        let acceptExpiry = try XCTUnwrap((accept["validUntil"] as? NSNumber)?.int64Value)
+        XCTAssertGreaterThanOrEqual(acceptExpiry, before + 31_536_000_000)
+        XCTAssertLessThanOrEqual(acceptExpiry, after + 31_536_000_000)
+
+        let reject = try XCTUnwrap(JSONHandler.deserializeData(rows[1].data) as? [String: Any])
+        let rejectExpiry = try XCTUnwrap((reject["validUntil"] as? NSNumber)?.int64Value)
+        XCTAssertGreaterThanOrEqual(rejectExpiry, before, "a withdrawal expires now, not in 1970")
+        XCTAssertLessThanOrEqual(rejectExpiry, after)
+
+        let wire = String(decoding: rows[1].data, as: UTF8.self)
+        XCTAssertTrue(
+            wire.contains("\"validUntil\":\(rejectExpiry)"),
+            "an integer on the wire, not 1.7e12 or a fraction: \(wire)")
+    }
+
     // MARK: - logOut / reset
 
     func testLogOutRotatesProfileButKeepsQueue() {
