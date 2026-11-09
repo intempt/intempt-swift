@@ -197,6 +197,9 @@ intempt.consent(action: .accept, validUntil: 31_536_000)
 intempt.consent(action: .reject, validUntil: 0)
 ```
 
+`validUntil` is how long the answer holds, in seconds from now; the SDK sends the
+absolute expiry (epoch milliseconds) the endpoint expects, so `0` expires now.
+
 `.reject` **enforces** the decision: collection stops and the queue is purged.
 The withdrawal record itself is preserved and still transmitted — it's the
 evidence the user objected, and dropping it would mean the objection is

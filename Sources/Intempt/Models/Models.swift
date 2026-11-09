@@ -215,10 +215,24 @@ struct ConsentModel {
     /// Platform identifier. intemptjs hardcodes "web"; native reports the
     /// actual platform.
     let source: String
-    let validUntil: TimeInterval
+    /// The absolute expiry, epoch milliseconds — what push-source's
+    /// `ConsentService.normalizeValidUntil` and the other SDKs speak. `-1` is
+    /// the server's "unlimited".
+    let validUntil: Int64
     let email: String?
     let message: String?
     let category: String?
+
+    /// Turns the public API's validity DURATION (seconds from now) into the
+    /// absolute epoch-milliseconds expiry the endpoint accepts.
+    ///
+    /// The raw duration used to be sent as-is: 31536000 is no epoch the server
+    /// accepts (nor is 0, the documented withdrawal), so every consent was
+    /// rejected with a 400 and none was ever recorded. `0` becomes "now".
+    /// A duration no epoch can hold (infinite, NaN, beyond `Int64`) is unlimited.
+    static func expiry(after duration: TimeInterval, from now: Date) -> Int64 {
+        Int64(exactly: ((now.timeIntervalSince1970 + duration) * 1000).rounded()) ?? -1
+    }
 
     func toPayload() -> [String: Any] {
         var payload: [String: Any] = [

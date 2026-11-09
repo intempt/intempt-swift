@@ -5,6 +5,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Consents are recorded again (INT-5956).** `consent(action:validUntil:)` documents
+  `validUntil` as a duration in seconds, but the raw value was sent, and push-source accepts only
+  an absolute epoch (2010–2040), `unlimited` or `-1`. So `31_536_000` and the documented
+  withdrawal `0` were both answered 400 and no consent was ever recorded. The SDK now sends
+  `(now + validUntil) × 1000` as an integer, epoch milliseconds, the same unit intemptjs and
+  intempt-android send. The signature is unchanged. A duration no epoch can hold (`.infinity`)
+  is sent as `-1`, unlimited.
+- **A rejected consent no longer blocks every consent behind it.** A consent answered
+  400/413/422 was kept and resent on every flush and launch, and because consents drain one at a
+  time, oldest first, it held back every later consent, a withdrawal included. Like an event
+  batch, it is now dropped after three consecutive payload rejections, with an error log naming
+  the server's message, and the drain moves on. 401, 403 and 5xx are still kept and retried, so a
+  withdrawal is never lost to a bad key or an outage.
+
 ## [0.4.1] — 2026-11-02
 
 ### Fixed
