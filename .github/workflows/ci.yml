@@ -21,8 +21,8 @@ jobs:
     name: Server-only bucketing
     runs-on: intempt-ubuntu-github-runner
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: No SDK derives buckets locally (EXP-ASSIGN-004, EXP-ASSIGN-005)
@@ -36,7 +36,7 @@ jobs:
     name: swift test
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.app
       - name: Build
@@ -102,7 +102,7 @@ jobs:
     name: compile all platforms
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Proves every platform-conditional branch type-checks. A macOS-host
       # `swift test` cannot: all `#if os(iOS)` code is excluded from that build
       # entirely, so UIKit code could be arbitrarily broken and the suite would
@@ -120,7 +120,7 @@ jobs:
     name: demo app + UI tests
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Deliberately NOT pinning Xcode. `xcode-select -s /Applications/Xcode_16.app`
       # was here and it broke this job: that Xcode's iOS runtime is not installed
@@ -167,7 +167,7 @@ jobs:
     name: mutation tests
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Coverage says a line executed; it does not say an assertion would have
       # noticed the line being wrong. Each mutant is a defect this SDK could
@@ -188,7 +188,7 @@ jobs:
     name: init cost
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.app
 
@@ -214,7 +214,7 @@ jobs:
     name: format + secrets
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - name: Version sources agree
@@ -247,7 +247,7 @@ jobs:
     name: podspec lints
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Validates the spec CocoaPods will actually resolve, against the real
       # tag on the real remote — not a local copy. This is what `pod trunk push`
@@ -285,7 +285,7 @@ jobs:
     name: attribution present
     runs-on: intempt-ubuntu-github-runner
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Apache 2.0 §4(b) requires the modification notices, and §4(d) requires
       # NOTICE to travel with the distribution. A file that loses its
       # attribution header in a refactor is a license violation, so it fails CI.
