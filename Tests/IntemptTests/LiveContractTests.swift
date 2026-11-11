@@ -198,9 +198,10 @@ final class LiveContractTests: IntemptTestCase {
 
     // MARK: - Credentials
 
-    /// A wrong secret must be terminal AND must not destroy the queue. The old
-    /// Obj-C SDK read a 401 as success and deleted the batch.
-    func testBadCredentialsKeepTheEventsInsteadOfDeletingThem() throws {
+    /// A wrong secret is terminal and never counts as delivered (the old Obj-C
+    /// SDK read a 401 as success). Since INT-7436 the batch is dropped and
+    /// reported through `onDeliveryFailure` instead of kept forever.
+    func testBadCredentialsDropTheBatchAndReportIt() throws {
         let credentials = try requireCredentials()
         let instance = try IntemptInstance.makeForTesting(
             apiKey: "\(credentials.apiKey.split(separator: ".")[0]).definitelyWrongSecret",
@@ -210,11 +211,13 @@ final class LiveContractTests: IntemptTestCase {
             store: defaults,
             databaseDirectory: tempDir)
 
+        let failures = Recorded()
+        instance.onDeliveryFailure = { failures.append(failure: $0) }
+
         XCTAssertTrue(instance.track(eventTitle: "Live Auth Failure"))
         XCTAssertEqual(flush(instance), 0, "a 401 delivers nothing")
-        XCTAssertEqual(
-            instance.queuedEventCount(), 1,
-            "the data is valid and the integration is what is broken — keep it")
+        XCTAssertEqual(instance.queuedEventCount(), 0, "dropped, not kept forever")
+        XCTAssertEqual(failures.failures.map(\.status), [401])
     }
 
     // MARK: - Consent
