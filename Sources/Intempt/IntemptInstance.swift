@@ -518,9 +518,7 @@ public final class IntemptInstance {
         defaultValue: JSONValue,
         completion: @escaping (FlagDetail) -> Void
     ) {
-        // The device identifier is filled in from the SDK's own identity when the caller does not
-        // supply one, because it is the value that survives sign-in.
-        let resolved = context ?? FlagContext(profileId: identity.profileId)
+        let resolved = resolvedFlagContext(context)
         flags.detail(key: key, context: resolved, sessionId: identity.sessionId) { detail in
             guard let detail else {
                 return completion(FlagDetail(value: defaultValue, reason: .unanswered))
@@ -530,6 +528,16 @@ public final class IntemptInstance {
                     value: detail.value ?? defaultValue,
                     reason: detail.reason))
         }
+    }
+
+    /// The device identifier is filled in from the SDK's own identity when the caller does not
+    /// supply one, because it is the value that survives sign-in. Merged, not defaulted: a caller
+    /// passing only a userId must still send the stored profileId (INT-7453). Empty counts as
+    /// missing because `Flags` omits an empty profileId from the wire anyway. No userId is
+    /// added: see `FlagsTests.testTheDefaultContextDerivesOnProfileIdNotUserId`.
+    private func resolvedFlagContext(_ context: FlagContext?) -> FlagContext {
+        let supplied = context?.profileId.flatMap { $0.isEmpty ? nil : $0 }
+        return FlagContext(userId: context?.userId, profileId: supplied ?? identity.profileId)
     }
 
     /// Every key assigned to this person, in one call.
@@ -544,7 +552,7 @@ public final class IntemptInstance {
         completion: @escaping ([String: JSONValue]) -> Void
     ) {
         flags.all(
-            context: context ?? FlagContext(profileId: identity.profileId),
+            context: resolvedFlagContext(context),
             sessionId: identity.sessionId,
             completion: completion)
     }
