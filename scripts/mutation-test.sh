@@ -40,7 +40,10 @@ declare -a SURVIVORS
 # file | search | replace | invariant it breaks
 MUTANTS=(
 "Sources/Intempt/IntemptCredentials.swift|maxSplits: 1|maxSplits: 9|the API key splits on the FIRST dot only; a secret containing a dot must not be truncated into extra parts"
-"Sources/Intempt/Flush.swift|maxStrikes = 3|maxStrikes = 300|a payload the server keeps rejecting must be dropped after a bounded number of attempts, not retried forever"
+"Sources/Intempt/Flush.swift|maxConsentStrikes = 3|maxConsentStrikes = 300|a consent the server keeps rejecting must be dropped after a bounded number of attempts, not retried forever"
+"Sources/Intempt/Flush.swift|self.dropRejectedBatch(outcome, ids: goodIds)|self.db.setFlag(.events, ids: goodIds, to: false)|a rejected batch is dropped on the first answer (R-retry, android parity); keeping it blocks every event behind it"
+"Sources/Intempt/RetryPolicy.swift|status == 404|status == -404|404 is retryable (android HttpStatusPolicy); dropping it deletes every batch while a route flaps during a deploy"
+"Sources/Intempt/Flush.swift|> QueueConstants.consentMaxAge|> QueueConstants.consentMaxAge * 1000|a consent kept by retryable answers must be dropped after 30 days, or it parks the queue head forever"
 "Sources/Intempt/Push.swift|count >= 32|count >= 1|a stringified token (\"32 bytes\") must be rejected; accepting it registers a device that can never be reached"
 "Sources/Intempt/Constants.swift|[408, 429, 500, 502, 503, 504]|[408, 500, 502, 503, 504]|429 must be retryable; treating a rate limit as terminal discards the events"
 "Sources/Intempt/IntemptDB.swift|ORDER BY time ASC|ORDER BY time DESC|eviction must drop the OLDEST rows; dropping newest throws away what just happened and keeps stale data"

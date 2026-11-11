@@ -164,14 +164,16 @@ final class FlushTests: IntemptTestCase {
         XCTAssertEqual(db.count(.events), 5)
     }
 
-    /// A 401 is a misconfigured integration, not bad data. The events are still
-    /// valid and must survive until the credentials are fixed.
-    func testUnauthorizedKeepsEveryEvent() {
+    /// R-retry (D9, INT-7438): the backend never accepts an event it answered
+    /// 401 for, so the batch is dropped on the first answer, as on android.
+    func testUnauthorizedDropsTheBatchOnTheFirstAnswer() {
         seedEvents(db, count: 5)
         let flush = makeFlush(fallback: .status(401))
 
-        XCTAssertEqual(flushSync(flush), 0)
-        XCTAssertEqual(db.count(.events), 5)
+        XCTAssertEqual(flushSync(flush), 0, "a dropped batch is not reported as sent")
+        XCTAssertEqual(db.count(.events), 0)
+        XCTAssertEqual(session.requestCount, 1)
+        XCTAssertEqual(flush.consecutiveFailures, 0, "a drop does not open a backoff window")
     }
 
     /// The claim must be released on failure, or the rows are flagged forever
@@ -389,8 +391,9 @@ final class FlushTests: IntemptTestCase {
 
 // MARK: - Terminal rejection policy
 
-/// A batch the server will never accept must not block the queue forever, and
-/// a batch rejected because the CREDENTIALS are wrong must never be dropped.
+/// Android parity (Beso, 2026-11-11; R-retry, D9/INT-7438): a non-retryable
+/// answer drops a batch at once and a consent after three in a row; 403, 404,
+/// 408, 429 and 5xx keep both.
 ///
 /// Every test here drives a controllable clock. The backoff gate opens after
 /// two consecutive failures, so with a real clock the third flush is suppressed
@@ -408,56 +411,62 @@ extension FlushTests {
         }
     }
 
-    /// Production has been observed returning a transient 400 to a payload it
-    /// accepts moments later, so one rejection must not discard anything.
-    func testASingleTerminalRejectionKeepsTheBatch() {
-        seedEvents(db, count: 3)
-        let flush = makeFlush(replies: [.serverError(400, "transient")])
+    /// Android's `HttpStatusPolicy.shouldDrop`: every status at 300 or above
+    /// that is not retryable drops the batch on the first answer.
+    func testNonRetryableStatusesDropTheBatchOnTheFirstAnswer() {
+        for status in [300, 301, 400, 401, 402, 405, 409, 413, 422, 451, 499, 600, 999] {
+            db.deleteAll(.events)
+            seedEvents(db, count: 3)
+            let flush = makeFlush(replies: [.status(status)])
 
-        XCTAssertEqual(flushSync(flush), 0)
-        XCTAssertEqual(db.count(.events), 3, "one 400 must not cost data")
-    }
-
-    func testRepeatedTerminalRejectionsEventuallyDropTheBatch() {
-        seedEvents(db, count: 3)
-        var now = Date(timeIntervalSince1970: 1_700_000_000)
-        let flush = makeFlush(
-            fallback: .serverError(400, "permanently malformed"), now: { now })
-        let step = { now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1) }
-
-        _ = flushSync(flush)
-        XCTAssertEqual(db.count(.events), 3, "strike 1: kept")
-        step()
-
-        _ = flushSync(flush)
-        XCTAssertEqual(db.count(.events), 3, "strike 2: kept")
-        step()
-
-        _ = flushSync(flush)
-        XCTAssertEqual(
-            db.count(.events), 0,
-            "strike 3: dropped, or it blocks every event behind it forever")
-    }
-
-    /// The exemption that matters. A 401 is a fixable integration mistake and
-    /// the events are perfectly valid — dropping them would be data loss caused
-    /// by a typo in a key.
-    func testUnauthorizedIsNeverDroppedNoMatterHowManyTimes() {
-        seedEvents(db, count: 3)
-        var now = Date(timeIntervalSince1970: 1_700_000_000)
-        let flush = makeFlush(fallback: .status(401), now: { now })
-
-        for attempt in 1...6 {
             _ = flushSync(flush)
-            now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
-            XCTAssertEqual(
-                db.count(.events), 3,
-                "attempt \(attempt): a credential failure must never cost data")
+            XCTAssertEqual(db.count(.events), 0, "\(status) must drop on the first answer")
         }
-        XCTAssertGreaterThanOrEqual(
-            session.requestCount, 6, "each attempt must actually reach the server")
     }
 
+    /// Android's `HttpStatusPolicy.isRetryable`: 403, 404, 408, 429 and every
+    /// 5xx keep the batch, 501 and 505 included.
+    func testRetryableStatusesKeepTheBatch() {
+        for status in [403, 404, 408, 429, 500, 501, 502, 503, 504, 505, 599] {
+            db.deleteAll(.events)
+            seedEvents(db, count: 3)
+            let flush = makeFlush(replies: [.status(status)])
+
+            XCTAssertEqual(flushSync(flush), 0)
+            XCTAssertEqual(db.count(.events), 3, "\(status) must keep the batch")
+            XCTAssertEqual(flush.consecutiveFailures, 1, "\(status) is a failure for the backoff")
+        }
+    }
+
+    /// A dropped batch must not block the one behind it.
+    func testTheBatchBehindADroppedOneIsSentInTheSamePass() {
+        seedEvents(db, count: APIConstants.maxBatchSize + 10)
+        let flush = makeFlush(replies: [.serverError(400, "malformed")], fallback: .ok())
+
+        XCTAssertEqual(flushSync(flush), 10, "the second batch goes out in the same pass")
+        XCTAssertEqual(db.count(.events), 0)
+        XCTAssertEqual(session.requestCount, 2)
+    }
+
+    func testABatchDropIsLoggedAtErrorWithTheServersMessage() {
+        let sink = CollectingLogger()
+        IntemptLogger.shared.addLogging(sink)
+        IntemptLogger.shared.enable(.error)
+        defer {
+            IntemptLogger.shared.removeAllLogging()
+            IntemptLogger.shared.disableAllLevels()
+        }
+        seedEvents(db, count: 2)
+        let flush = makeFlush(replies: [.serverError(422, "Invalid feed id: nonexistent")])
+
+        _ = flushSync(flush)
+        XCTAssertTrue(
+            sink.messages.contains { $0.contains("dropping 2 event(s)") && $0.contains("Invalid feed id") },
+            "the drop names the server's reason, at error level: \(sink.messages)")
+    }
+
+    /// 403 stays retryable (INT-5897, pending K1): a gateway that answers 403
+    /// during a deploy must not delete every batch.
     func testForbiddenIsAlsoNeverDropped() {
         seedEvents(db, count: 2)
         var now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -471,65 +480,10 @@ extension FlushTests {
         XCTAssertGreaterThanOrEqual(session.requestCount, 5)
     }
 
-    /// A success must clear the batch's strike entry.
-    ///
-    /// This is memory hygiene, not a behaviour change, and the test says so
-    /// rather than pretending otherwise. Row ids are AUTOINCREMENT and never
-    /// reused, so an entry left behind after its rows are deleted can never
-    /// match another batch — it simply accumulates, one entry per failed batch,
-    /// for the life of the process. An earlier version of this test used a
-    /// second `Flush` instance and therefore proved nothing: mutation testing
-    /// showed removing the clear left it green.
-    func testSuccessClearsTheStrikeEntrySoItCannotAccumulate() {
-        seedEvents(db, count: 2, prefix: "a")
-        var now = Date(timeIntervalSince1970: 1_700_000_000)
-        let flush = makeFlush(replies: [.serverError(400, "blip"), .ok()], now: { now })
-
-        XCTAssertEqual(flushSync(flush), 0, "strike 1")
-        XCTAssertEqual(flush.trackedStrikeCount, 1, "the failed batch is being tracked")
-
-        now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
-        XCTAssertEqual(flushSync(flush), 2, "then it succeeds")
-        XCTAssertEqual(db.count(.events), 0)
-        XCTAssertEqual(
-            flush.trackedStrikeCount, 0,
-            "the entry must be released; ids are never reused, so it could only accumulate")
-    }
-
-    /// A retryable failure is not a strike either — it clears the entry too.
-    func testRetryableFailureDoesNotAccumulateStrikes() {
-        seedEvents(db, count: 2)
-        var now = Date(timeIntervalSince1970: 1_700_000_000)
-        let flush = makeFlush(replies: [.serverError(400, "blip"), .status(503)], now: { now })
-
-        _ = flushSync(flush)
-        XCTAssertEqual(flush.trackedStrikeCount, 1)
-
-        now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
-        _ = flushSync(flush)
-        XCTAssertEqual(
-            flush.trackedStrikeCount, 0,
-            "a 503 is not evidence the payload is bad, so the strike is dropped")
-        XCTAssertEqual(db.count(.events), 2, "and nothing is deleted")
-    }
-
-    /// 413 means the batch is too large to ever be accepted as-is.
-    func testPayloadTooLargeIsDroppedAfterTheLimit() {
-        seedEvents(db, count: 4)
-        var now = Date(timeIntervalSince1970: 1_700_000_000)
-        let flush = makeFlush(fallback: .status(413), now: { now })
-
-        for _ in 1...3 {
-            _ = flushSync(flush)
-            now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
-        }
-        XCTAssertEqual(db.count(.events), 0)
-    }
-
     // MARK: - Consent rejections (INT-5956)
 
-    private func seedConsent(_ action: String) {
-        db.insert(.consents, data: JSONHandler.encodeAPIData(["action": action])!)
+    private func seedConsent(_ action: String, at time: Date = Date()) {
+        db.insert(.consents, data: JSONHandler.encodeAPIData(["action": action])!, at: time)
     }
 
     private func consentRequests() -> [[String: Any]] {
@@ -615,10 +569,10 @@ extension FlushTests {
         XCTAssertEqual(consentRequests().last?["action"] as? String, "reject")
     }
 
-    /// The SDK-5 exemptions: a bad key or an outage is not evidence the record
-    /// is bad, and a withdrawal must never be lost to either.
-    func testAConsentIsNeverDroppedForUnauthorizedForbiddenOrServerErrors() {
-        for status in [401, 403, 500, 503] {
+    /// Android's retryable set keeps the record and is no strike. The age
+    /// limit, not the strike count, bounds these.
+    func testAConsentIsNeverDroppedForARetryableStatus() {
+        for status in [403, 404, 408, 429, 500, 501, 503, 505] {
             db.deleteAll(.consents)
             seedConsent("reject")
             var now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -661,10 +615,10 @@ extension FlushTests {
         XCTAssertEqual(flush.trackedConsentStrikeCount, 0)
     }
 
-    /// A 401 or 403 in between breaks the run too: it is no rejection of the
-    /// record, so the count starts again after it.
-    func testAnUnauthorizedOrForbiddenReplyStartsTheCountAgain() {
-        for status in [401, 403] {
+    /// A retryable reply in between breaks the run too: it is no rejection of
+    /// the record, so the count starts again after it.
+    func testARetryableReplyStartsTheCountAgain() {
+        for status in [403, 404] {
             db.deleteAll(.consents)
             seedConsent("accept")
             var now = Date(timeIntervalSince1970: 1_700_000_000)
@@ -687,5 +641,57 @@ extension FlushTests {
             _ = flushSync(flush)
             XCTAssertEqual(db.count(.consents), 0, "\(status): then accepted and deleted")
         }
+    }
+
+    /// R-retry: 401 and 402 are rejections of a consent like any other
+    /// non-retryable status, and mixed ones still count as one run.
+    func testUnauthorizedAndPaymentRequiredAreConsentRejections() {
+        seedConsent("reject")
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let flush = makeFlush(
+            replies: [.status(401), .status(402), .serverError(400, "malformed")],
+            fallback: .ok(), now: { now })
+
+        for _ in 1...2 {
+            _ = flushSync(flush)
+            now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
+            XCTAssertEqual(db.count(.consents), 1, "kept until the third rejection")
+        }
+        _ = flushSync(flush)
+        XCTAssertEqual(db.count(.consents), 0, "the third rejection in a row drops it")
+        XCTAssertEqual(
+            flush.consecutiveFailures, 0,
+            "the server is answering, so the consents behind it are not backed off")
+    }
+
+    // MARK: - Consent age (android CONSENT_MAX_AGE_DAYS)
+
+    /// A consent kept by retryable answers must not park the queue head
+    /// forever: past the age limit it is dropped without being sent.
+    func testAConsentOlderThanTheAgeLimitIsDroppedWithoutBeingSent() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        seedConsent("accept", at: now.addingTimeInterval(-QueueConstants.consentMaxAge - 1))
+        seedConsent("reject", at: now)
+        let flush = makeFlush(fallback: .ok(), now: { now })
+
+        _ = flushSync(flush)
+        XCTAssertEqual(db.count(.consents), 0)
+        XCTAssertEqual(
+            consentRequests().map { $0["action"] as? String }, ["reject"],
+            "the expired head is dropped and the one behind it is sent")
+    }
+
+    func testAConsentJustInsideTheAgeLimitIsStillSent() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        seedConsent("accept", at: now.addingTimeInterval(-QueueConstants.consentMaxAge + 60))
+        let flush = makeFlush(fallback: .ok(), now: { now })
+
+        _ = flushSync(flush)
+        XCTAssertEqual(consentRequests().count, 1)
+        XCTAssertEqual(db.count(.consents), 0)
+    }
+
+    func testTheConsentAgeLimitIsThirtyDays() {
+        XCTAssertEqual(QueueConstants.consentMaxAge, 30 * 24 * 60 * 60)
     }
 }
