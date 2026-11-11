@@ -408,4 +408,65 @@ final class IntemptInstanceTests: XCTestCase {
         group.wait()
         XCTAssertTrue(sdk.hasOptedOut())
     }
+
+    // MARK: - Flag context (INT-7453)
+
+    /// A caller-supplied FlagContext used to replace the stored identity wholesale, so a
+    /// `{userId}` or empty context reached the server with no profileId: the empty one got a 400
+    /// and resolved to the default. Android merges `context.profileId ?: storage.getProfileId()`.
+    private func flagSDK() throws -> (IntemptInstance, MockSession) {
+        let session = MockSession(replies: [.json(200, #"{"choices":[]}"#)], fallback: .status(500))
+        let instance = try IntemptInstance.makeForTesting(
+            store: defaults, databaseDirectory: tmp,
+            network: Network(session: session, host: "example.invalid"))
+        return (instance, session)
+    }
+
+    private func identification(_ session: MockSession) -> [String: Any]? {
+        session.bodies.compactMap { $0["identification"] as? [String: Any] }.first
+    }
+
+    private func variation(_ instance: IntemptInstance, context: FlagContext) {
+        let done = expectation(description: "variation")
+        instance.variation(key: "k", context: context, defaultValue: .null) { _ in done.fulfill() }
+        wait(for: [done], timeout: 2)
+    }
+
+    func testAUserIdContextStillCarriesTheStoredProfileId() throws {
+        let (instance, session) = try flagSDK()
+        variation(instance, context: FlagContext(userId: "u-1"))
+        let id = identification(session)
+        XCTAssertEqual(id?["profileId"] as? String, instance.getProfileId())
+        XCTAssertEqual(id?["userId"] as? String, "u-1")
+    }
+
+    func testAnEmptyContextCarriesTheStoredProfileIdAndNoUserId() throws {
+        let (instance, session) = try flagSDK()
+        variation(instance, context: FlagContext())
+        let id = identification(session)
+        XCTAssertEqual(id?["profileId"] as? String, instance.getProfileId())
+        XCTAssertNil(id?["userId"])
+    }
+
+    func testAnEmptyProfileIdIsTreatedAsMissing() throws {
+        let (instance, session) = try flagSDK()
+        variation(instance, context: FlagContext(userId: "u-1", profileId: ""))
+        XCTAssertEqual(identification(session)?["profileId"] as? String, instance.getProfileId())
+    }
+
+    func testAnExplicitProfileIdIsKept() throws {
+        let (instance, session) = try flagSDK()
+        variation(instance, context: FlagContext(profileId: "p-x"))
+        XCTAssertEqual(identification(session)?["profileId"] as? String, "p-x")
+    }
+
+    func testAllFlagsWithAUserIdContextCarriesTheStoredProfileId() throws {
+        let (instance, session) = try flagSDK()
+        let done = expectation(description: "allFlags")
+        instance.allFlags(context: FlagContext(userId: "u-1")) { _ in done.fulfill() }
+        wait(for: [done], timeout: 2)
+        let id = identification(session)
+        XCTAssertEqual(id?["profileId"] as? String, instance.getProfileId())
+        XCTAssertEqual(id?["userId"] as? String, "u-1")
+    }
 }

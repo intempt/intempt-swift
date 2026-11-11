@@ -122,11 +122,37 @@ final class RetryPolicyTests: XCTestCase {
         XCTAssertEqual(p.consecutiveFailures, 1)
     }
 
-    /// A 401 means bad credentials, not bad data — the events are still valid
-    /// and must survive until the integration is fixed.
-    func testTerminalKeepsTheBatchAndStops() {
+    /// R-retry (D9, INT-7438): a non-retryable answer rejects the batch and,
+    /// as on android, leaves the backoff counter alone.
+    func testNonRetryableTerminalIsRejectedWithoutCountingAFailure() {
         var p = policy()
-        XCTAssertEqual(p.apply(.terminal(status: 401, body: nil)), .keepAndStop)
+        XCTAssertEqual(p.apply(.terminal(status: 401, body: nil)), .reject)
+        XCTAssertEqual(p.consecutiveFailures, 0)
+        XCTAssertFalse(p.requestNotAllowed)
+    }
+
+    func testRetryableTerminalIsKeptAndCountsAFailure() {
+        var p = policy()
+        XCTAssertEqual(p.apply(.terminal(status: 404, body: nil)), .keepAndRetry)
+        XCTAssertEqual(p.consecutiveFailures, 1)
+    }
+
+    /// The whole 300...599 range plus out-of-range values, against android's
+    /// `HttpStatusPolicy` written out here rather than read from the code
+    /// under test (android HostileInputTest).
+    func testStatusSweepMatchesAndroid() {
+        let androidRetryable: Set<Int> = Set([403, 404, 408, 429]).union(500...599)
+        for status in Array(300...599) + [600, 700, 999] {
+            var p = policy()
+            let expected: RetryPolicy.Disposition =
+                androidRetryable.contains(status) ? .keepAndRetry : .reject
+            XCTAssertEqual(
+                p.apply(.terminal(status: status, body: nil)), expected, "status \(status)")
+            XCTAssertEqual(
+                RetryPolicy.isDeliveryRetryable(status), androidRetryable.contains(status),
+                "status \(status)")
+        }
+        XCTAssertTrue(RetryPolicy.isDeliveryRetryable(0), "no status at all is a transport failure")
     }
 
     func testTransportFailureKeepsAndRetries() {

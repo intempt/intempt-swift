@@ -191,7 +191,9 @@ final class IntemptDB {
     /// Appends a row. `flag` marks a row as claimed by an in-flight batch —
     /// it is never set before the server has acknowledged the send.
     @discardableResult
-    func insert(_ type: PersistenceType, data: Data, flag: Bool = false) -> Bool {
+    func insert(
+        _ type: PersistenceType, data: Data, flag: Bool = false, at time: Date = Date()
+    ) -> Bool {
         queue.sync {
             guard let db = connection else { return false }
             let sql = "INSERT INTO \(tableName(type)) (data, flag, time) VALUES(?, ?, ?);"
@@ -205,7 +207,7 @@ final class IntemptDB {
                 guard let base = raw.baseAddress else { return false }
                 sqlite3_bind_blob(stmt, 1, base, Int32(raw.count), Self.transient)
                 sqlite3_bind_int(stmt, 2, flag ? 1 : 0)
-                sqlite3_bind_double(stmt, 3, Date().timeIntervalSince1970)
+                sqlite3_bind_double(stmt, 3, time.timeIntervalSince1970)
                 let step = sqlite3_step(stmt)
                 if step != SQLITE_DONE {
                     handle(step, context: "insert step")
@@ -277,6 +279,23 @@ final class IntemptDB {
             let list = ids.map(String.init).joined(separator: ",")
             return exec(
                 "UPDATE \(tableName(type)) SET flag = \(newValue ? 1 : 0) WHERE id IN (\(list));")
+        }
+    }
+
+    /// When the row was inserted, or nil when it no longer exists.
+    func insertedAt(_ type: PersistenceType, id: Int32) -> Date? {
+        queue.sync {
+            guard let db = connection else { return nil }
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard
+                sqlite3_prepare_v2(
+                    db, "SELECT time FROM \(tableName(type)) WHERE id = ?;", -1, &stmt, nil)
+                    == SQLITE_OK
+            else { return nil }
+            sqlite3_bind_int(stmt, 1, id)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0))
         }
     }
 

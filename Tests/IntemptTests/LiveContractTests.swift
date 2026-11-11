@@ -179,12 +179,10 @@ final class LiveContractTests: IntemptTestCase {
         }
         XCTAssertEqual(instance.queuedEventCount(), count)
 
-        // Retries, because production has been observed returning a transient
-        // 400 to a payload it accepts on the next attempt. The invariant under
-        // test is that nothing is LOST and everything eventually lands — not
-        // that a live server is perfect on the first try. A single-pass
-        // assertion here failed against a real 400 while the SDK had behaved
-        // exactly right: all 55 events were still in the queue.
+        // Retries cover a retryable answer (5xx, 429, offline). A transient 400
+        // is no longer retried: R-retry drops on the first answer, so if
+        // production repeats the transient 400 recorded in docs/CONTRACT.md
+        // this test fails, and that failure is real data loss, not a flake.
         var delivered = 0
         for attempt in 1...4 {
             delivered += flush(instance, timeout: 60)
@@ -198,9 +196,10 @@ final class LiveContractTests: IntemptTestCase {
 
     // MARK: - Credentials
 
-    /// A wrong secret must be terminal AND must not destroy the queue. The old
-    /// Obj-C SDK read a 401 as success and deleted the batch.
-    func testBadCredentialsKeepTheEventsInsteadOfDeletingThem() throws {
+    /// A wrong secret is answered 401, which R-retry (D9, INT-7438) drops on
+    /// the first answer, as android does. The old Obj-C SDK read a 401 as
+    /// success; this asserts it is neither counted as delivered nor kept.
+    func testBadCredentialsDropTheBatchWithoutCountingItDelivered() throws {
         let credentials = try requireCredentials()
         let instance = try IntemptInstance.makeForTesting(
             apiKey: "\(credentials.apiKey.split(separator: ".")[0]).definitelyWrongSecret",
@@ -212,9 +211,7 @@ final class LiveContractTests: IntemptTestCase {
 
         XCTAssertTrue(instance.track(eventTitle: "Live Auth Failure"))
         XCTAssertEqual(flush(instance), 0, "a 401 delivers nothing")
-        XCTAssertEqual(
-            instance.queuedEventCount(), 1,
-            "the data is valid and the integration is what is broken — keep it")
+        XCTAssertEqual(instance.queuedEventCount(), 0, "and the rejected batch is dropped")
     }
 
     // MARK: - Consent

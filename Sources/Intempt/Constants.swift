@@ -45,6 +45,11 @@ enum QueueConstants {
     /// Hard ceiling on locally-stored events. Beyond this the oldest are
     /// evicted, so an offline device cannot fill the user's disk.
     static let maxQueueSize = 5000
+
+    /// A consent kept by a retryable answer (403, 404, 5xx, offline) is
+    /// dropped once older than this, or it parks the queue head forever.
+    /// Android's `CONSENT_MAX_AGE_DAYS`.
+    static let consentMaxAge: TimeInterval = 30 * 24 * 60 * 60
 }
 
 enum EventConstants {

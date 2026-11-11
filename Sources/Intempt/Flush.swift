@@ -239,102 +239,65 @@ final class Flush {
                 switch self.policy.apply(outcome) {
                 case .deleteBatch:
                     self.db.delete(.events, ids: goodIds)
-                    self.strikes.removeValue(forKey: goodIds[0])
                     self.drainEvents(sent: sent + goodIds.count, done: done)
 
                 case .keepAndRetry:
                     // Modifications 1 and 4: release the claim so the rows are
                     // visible to the next pass, and stop rather than hammer.
                     self.db.setFlag(.events, ids: goodIds, to: false)
-                    self.strikes.removeValue(forKey: goodIds[0])
                     done(sent)
 
-                case .keepAndStop:
-                    self.db.setFlag(.events, ids: goodIds, to: false)
-                    self.recordTerminal(outcome, ids: goodIds)
-                    done(sent)
+                case .reject:
+                    self.dropRejectedBatch(outcome, ids: goodIds)
+                    self.drainEvents(sent: sent, done: done)
                 }
             }
         }
     }
 
-    /// Consecutive terminal rejections for the batch starting at a given row id.
-    private var strikes: [Int32: Int] = [:]
-
-    /// Statuses that mean "these bytes will never be accepted" as opposed to
-    /// "your credentials are wrong". A misconfigured key must never cost data;
-    /// a permanently malformed batch must never block the queue forever.
-    private static let payloadRejections: Set<Int> = [400, 413, 422]
-
-    /// How many terminal rejections a batch may take before it is discarded.
-    private static let maxStrikes = 3
-
-    /// Decides whether a terminally-rejected batch should be dropped.
+    /// Drops a batch on the first non-retryable answer, as android's
+    /// `HttpStatusPolicy.shouldDrop` does (Beso, 2026-11-11: the SDKs match).
+    /// R-retry (D9, INT-7438): the backend never accepts an event it answered
+    /// 400, 401 or 402 for, and a kept batch blocks every event behind it.
     ///
-    /// Without this a batch the server will never accept sits at the head of
-    /// the queue and fails every flush forever, blocking every event behind it
-    /// — the same shape as the poison-row problem, one level up. Neither
-    /// upstream nor the old Obj-C SDK has any notion of it.
-    ///
-    /// 401 and 403 are deliberately exempt: those mean the integration is
-    /// misconfigured, the data is fine, and dropping it would destroy real
-    /// events over a fixable mistake.
-    ///
-    /// Three strikes rather than one because production has been observed
-    /// returning a transient 400 to a payload it accepts on the next attempt
-    /// (docs/CONTRACT.md).
-    private func recordTerminal(_ outcome: HTTPOutcome, ids: [Int32]) {
-        guard case .terminal(let status, let body) = outcome,
-            Self.payloadRejections.contains(status),
-            let head = ids.first
-        else { return }
-
-        let count = (strikes[head] ?? 0) + 1
-        strikes[head] = count
-
-        guard count >= Self.maxStrikes else {
-            IntemptLogger.shared.log(
-                .warning,
-                "batch rejected with \(status) (attempt \(count)/\(Self.maxStrikes)); keeping")
-            return
-        }
-
+    /// Rejected: strikes for events. Android has none, and parity was the
+    /// ruling. Known cost: docs/CONTRACT.md records production once answering
+    /// a transient 400 to a payload it later accepted; that batch is now lost.
+    private func dropRejectedBatch(_ outcome: HTTPOutcome, ids: [Int32]) {
+        guard case .terminal(let status, let body) = outcome else { return }
         let detail =
             IntemptError.serverMessages(from: body)?.joined(separator: "; ")
             ?? "no message"
         IntemptLogger.shared.log(
             .error,
-            "dropping \(ids.count) event(s) after \(count) rejections with \(status): \(detail). "
+            "dropping \(ids.count) event(s) rejected with \(status): \(detail). "
                 + "These events will never be accepted; keeping them would block the queue.")
         db.delete(.events, ids: ids)
-        strikes.removeValue(forKey: head)
     }
 
-    /// Consecutive terminal rejections for a consent record, by row id.
+    /// How many consecutive non-retryable answers a consent may take before it is dropped.
+    /// Android's `MAX_CONSENT_REJECTIONS`.
+    private static let maxConsentStrikes = 3
+
+    /// Consecutive non-retryable answers for a consent record, by row id.
     private var consentStrikes: [Int32: Int] = [:]
 
-    /// `recordTerminal` for a consent record: the same statuses and the same
-    /// three strikes, so a consent the server will never accept stops being
-    /// resent on every flush and launch. 401 and 403 stay exempt, and so does
-    /// every retryable failure: a withdrawal must never be lost to a bad key
-    /// or an outage.
+    /// Counts a rejection of a consent record and drops it on the third in a
+    /// row. Every non-retryable status counts, 401 and 402 included (R-retry);
+    /// the retryable ones (403, 404, 408, 429, 5xx, offline) keep the record
+    /// and reset the run, and the age limit in `drainConsents` bounds them.
     ///
     /// - Returns: whether the record was dropped.
-    private func recordConsentTerminal(_ outcome: HTTPOutcome, id: Int32) -> Bool {
+    private func recordConsentRejection(_ outcome: HTTPOutcome, id: Int32) -> Bool {
         guard case .terminal(let status, let body) = outcome else { return false }
-        guard Self.payloadRejections.contains(status) else {
-            // A 401 or 403 in between breaks the run: strikes count consecutive rejections.
-            consentStrikes.removeValue(forKey: id)
-            return false
-        }
 
         let count = (consentStrikes[id] ?? 0) + 1
         consentStrikes[id] = count
 
-        guard count >= Self.maxStrikes else {
+        guard count >= Self.maxConsentStrikes else {
             IntemptLogger.shared.log(
                 .warning,
-                "consent rejected with \(status) (attempt \(count)/\(Self.maxStrikes)); keeping")
+                "consent rejected with \(status) (attempt \(count)/\(Self.maxConsentStrikes)); keeping")
             return false
         }
 
@@ -359,6 +322,18 @@ final class Flush {
 
         let rows = db.read(.consents, limit: 1, flag: false)
         guard let row = rows.first else { return done() }
+
+        if let inserted = db.insertedAt(.consents, id: row.id),
+            policy.currentDate.timeIntervalSince(inserted) > QueueConstants.consentMaxAge
+        {
+            IntemptLogger.shared.log(
+                .error,
+                "dropping consent record: undelivered for over "
+                    + "\(Int(QueueConstants.consentMaxAge / 86_400)) days")
+            db.delete(.consents, ids: [row.id])
+            consentStrikes.removeValue(forKey: row.id)
+            return drainConsents(done: done)
+        }
 
         guard let body = JSONHandler.deserializeData(row.data) as? [String: Any] else {
             IntemptLogger.shared.log(.warning, "dropping undecodable consent record")
@@ -393,15 +368,21 @@ final class Flush {
                     self.consentStrikes.removeValue(forKey: row.id)
                     done()
 
-                case .keepAndStop:
-                    // Modification 5: a terminal consent failure is specific to
-                    // consent. Keep the record, but let events proceed rather
-                    // than stranding the entire queue behind it.
+                case .reject:
+                    // Modification 5: a rejected consent is specific to consent.
+                    // Keep the record, but let events proceed rather than
+                    // stranding the entire queue behind it.
                     self.db.setFlag(.consents, ids: [row.id], to: false)
-                    // Consents drain one at a time, oldest first, so a record
-                    // the server will never accept blocks every consent behind
-                    // it, a later withdrawal included. Once dropped, move on.
-                    guard self.recordConsentTerminal(outcome, id: row.id) else { return done() }
+                    guard self.recordConsentRejection(outcome, id: row.id) else {
+                        // `.reject` leaves the backoff alone because an event
+                        // batch is dropped and the drain moves on; a kept consent
+                        // rejection still backs off, as on android.
+                        self.policy.recordFailure()
+                        return done()
+                    }
+                    // The server is answering; the record was the problem. Do
+                    // not back off the consents behind it (android does the same).
+                    self.policy.recordSuccess()
                     self.drainConsents(done: done)
                 }
             }
@@ -413,9 +394,8 @@ final class Flush {
     var consecutiveFailures: Int { queue.sync { policy.consecutiveFailures } }
     /// Test seam. Also the reason success clears its entry: ids are never
     /// reused (the table is AUTOINCREMENT), so an entry left behind after a
-    /// batch is deleted can never match again and would accumulate for the life
+    /// record is deleted can never match again and would accumulate for the life
     /// of the process.
-    var trackedStrikeCount: Int { queue.sync { strikes.count } }
     var trackedConsentStrikeCount: Int { queue.sync { consentStrikes.count } }
     /// Reads the intent flag, not the `Timer` — see `startTimer`.
     var isTimerRunning: Bool { timerLock.read { armed } }

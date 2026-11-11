@@ -521,10 +521,10 @@ One error type across platforms, with these cases:
 | `storageUnavailable(reason)` | queue could not persist |
 | `server(status, messages)` | server rejected with detail |
 
-The terminal/retryable split is contractual. `401` is terminal — a bad credential cannot
-succeed on retry — but queued events are **kept**, because the data is valid and the
-integration is what is broken. Deleting them on 401 is total silent data loss, and it has
-already happened once in the Android transport.
+The terminal/retryable split is contractual. `401` is terminal, and the event queue drops
+the batch on the first 401, as intempt-android does (ruling R-retry, D9, INT-7438). The
+delivery path retries 403, 404, 408, 429, every 5xx and network failures; anything else at
+300 or above is dropped.
 
 ## Bridging rules for React Native
 

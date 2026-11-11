@@ -5,8 +5,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] — unreleased
+
 ### Fixed
 
+- **A caller's `FlagContext` keeps the stored profileId (INT-7453).** `variation` / `allFlags`
+  used a caller-supplied context as-is, so a `{userId}` context went without a profileId and an
+  empty one (what the React Native bridge builds) sent no identifier, got a 400 and resolved to
+  the default. The caller's `userId` is kept and the stored profileId fills in when the context's
+  is nil or empty, as intempt-android does.
 - **Consents are recorded again (INT-5956).** `consent(action:validUntil:)` documents
   `validUntil` as a duration in seconds, but the raw value was sent, and push-source accepts only
   an absolute epoch (2010–2040), `unlimited` or `-1`. So `31_536_000` and the documented
@@ -16,10 +23,19 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is sent as `-1`, unlimited.
 - **A rejected consent no longer blocks every consent behind it.** A consent answered
   400/413/422 was kept and resent on every flush and launch, and because consents drain one at a
-  time, oldest first, it held back every later consent, a withdrawal included. Like an event
-  batch, it is now dropped after three consecutive payload rejections, with an error log naming
-  the server's message, and the drain moves on. 401, 403 and 5xx are still kept and retried, so a
-  withdrawal is never lost to a bad key or an outage.
+  time, oldest first, it held back every later consent, a withdrawal included. It is now dropped
+  after three consecutive rejections, with an error log naming the server's message, and the
+  drain moves on. See *Changed* for which statuses count.
+
+### Changed
+
+- **Delivery retries and drops exactly as intempt-android does (R-retry, INT-7438).** 403, 404,
+  408, 429, every 5xx and network failures keep events and consents and retry with backoff.
+  Any other status at 300 or above drops an event batch on the first answer, 401 and 402
+  included, and the next batch is sent in the same flush; it counts as one strike against a
+  consent, which is dropped after three in a row. Before, 400/413/422 took three strikes and
+  401, 402, 404, 501 and 505 were kept forever. A consent still undelivered after 30 days is
+  dropped. Push webhooks and personalization classify statuses as before.
 
 ## [0.4.1] — 2026-11-02
 
