@@ -167,7 +167,9 @@ final class Flags {
             // flag key is worse than the flag reading its default — and docs/CONVENTIONS.md says
             // so rather than promising a throw the code does not make.
             assertionFailure("variation: key must not be empty")
-            return completion(failed(.badRequest, status: nil, key: key))
+            return completion(
+                FlagEvaluation(
+                    value: nil, reason: .error, error: failed(.badRequest, status: nil, key: key)))
         }
 
         guard Flags.isValidKey(key) else {
@@ -176,7 +178,9 @@ final class Flags {
             // aborting someone's debug build over one is worse than the flag reading its default.
             // The service refuses it either way, so this skips a round trip that could only fail.
             // Reported as the 400 it would have been, so the caller can tell it from "not set".
-            return completion(failed(.badRequest, status: nil, key: key))
+            return completion(
+                FlagEvaluation(
+                    value: nil, reason: .error, error: failed(.badRequest, status: nil, key: key)))
         }
 
         choose(context: context, sessionId: sessionId, names: [key], exposure: exposure) {
