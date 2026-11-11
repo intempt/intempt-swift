@@ -183,6 +183,29 @@ final class AutomaticEventsTests: IntemptTestCase {
         XCTAssertEqual(names, ["Session start", "Checkout"], "session start comes first")
     }
 
+    /// INT-7446 (round-2 CONTRACT S5): the session id is identity, like the profile id. It exists
+    /// before `initialize` returns and every event carries it, whatever the sessions flag says;
+    /// the flag only suppresses the "Session start"/"Session end" events.
+    func testSessionsOffStillMintsASessionIdThatEveryEventCarries() throws {
+        let instance = try IntemptInstance.makeForTesting(
+            store: defaults, databaseDirectory: tempDir,
+            automaticEvents: AutomaticEventOptions(sessions: false))
+
+        let minted = instance.getSessionId()
+        XCTAssertTrue(minted.hasPrefix("se_"), "minted at init, before any event: \(minted)")
+        XCTAssertGreaterThan(minted.count, 3)
+
+        XCTAssertTrue(instance.track(eventTitle: "Checkout"))
+        XCTAssertEqual(instance.queuedEventCount(), 1, "no Session start with sessions off")
+
+        let entry = instance.db.read(.events, limit: 10).first.flatMap {
+            JSONHandler.deserializeData($0.data) as? [String: Any]
+        }
+        let item = (entry?["payload"] as? [[String: Any]])?.first
+        XCTAssertEqual(entry?["name"] as? String, "Checkout")
+        XCTAssertEqual(item?["sessionId"] as? String, minted, "the event carries the minted id")
+    }
+
     /// The session-start emission re-enters the instance's enqueue path. Doing
     /// that inside the serial state queue deadlocks on the first event of every
     /// session — this test is the regression guard.
