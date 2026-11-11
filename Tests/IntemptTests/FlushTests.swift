@@ -559,14 +559,14 @@ extension FlushTests {
             _ = flushSync(flush)
             now = now.addingTimeInterval(APIConstants.maxRetryBackoff + 1)
         }
-        XCTAssertEqual(db.count(.consents), 1, "only the rejected head is dropped")
+        // The drop resets the backoff and the same drain moves on, as android's
+        // applyConsentOutcome does (R-retry parity), so the withdrawal goes out
+        // in the flush that drops the head, not one backoff later.
+        XCTAssertEqual(db.count(.consents), 0, "the withdrawal behind the head reaches the server")
         XCTAssertEqual(
-            consentRequests().map { $0["action"] as? String }, ["accept", "accept", "accept"],
+            consentRequests().map { $0["action"] as? String },
+            ["accept", "accept", "accept", "reject"],
             "nothing behind the head is sent while it is still being retried")
-
-        _ = flushSync(flush)
-        XCTAssertEqual(db.count(.consents), 0, "the withdrawal behind it now reaches the server")
-        XCTAssertEqual(consentRequests().last?["action"] as? String, "reject")
     }
 
     /// Android's retryable set keeps the record and is no strike. The age
