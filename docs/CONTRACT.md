@@ -15,9 +15,9 @@ a spec or from the JS SDK alone — where the two disagreed, the live response w
 | Wrong secret | **401** |
 | No `Authorization` header | **401** |
 
-401 is classified terminal — retrying a bad credential cannot succeed, but the
-queued events are **kept**, because the data is valid and the integration is
-what's broken.
+401 is classified terminal, and by ruling R-retry (D9, INT-7438) the batch is
+**dropped** on the first 401, as intempt-android does: the backend never accepts
+an event it answered 401 for.
 
 ## `POST /{org}/projects/{project}/sources/{sourceId}/track`
 
@@ -73,8 +73,9 @@ Returns **200** when push-source accepts it. Since `ConsentService.normalizeVali
 (push-source fa775720, 2026-10-16) it returns **400** for a `validUntil` that is not
 `unlimited`, `-1`, empty, an epoch in seconds or milliseconds between 2010 and 2040, or an ISO-8601
 date. A raw duration such as `31536000`, or `0`, is a 400. Before INT-5956 the SDK sent exactly
-that. A consent rejected 400/413/422 three times in a row is dropped with an error log; 401, 403
-and 5xx are kept and retried.
+that. A consent rejected three times in a row (any status at 300 or above except 403, 404, 408, 429
+and 5xx; 401 and 402 included) is dropped with an error log. The retryable ones are kept and
+retried, and a consent still undelivered after 30 days is dropped.
 
 ## `POST /{org}/projects/{project}/optimization/choose-api`
 
@@ -200,20 +201,14 @@ Production has been observed returning **400 to a payload it accepts moments
 later**. A 55-event drain failed its first batch with a 400; the identical
 bytes then returned 201 on six consecutive retries.
 
-Consequences, both implemented:
+Superseded 2026-11-11: Beso ruled the SDK matches intempt-android (R-retry, D9,
+INT-7438). A batch answered with a non-retryable status (anything at 300 or above
+except 403, 404, 408, 429 and 5xx) is dropped on the **first** answer, 401 and
+402 included. Known cost: a repeat of the transient 400 above now loses that
+batch, and the live multi-batch drain test fails on it.
 
-- A terminal rejection **never deletes data on the first failure**. The SDK
-  keeps the batch and retries on the next flush.
-- A batch is discarded only after **3 consecutive** 400/413/422 rejections,
-  because a batch the server will genuinely never accept would otherwise sit at
-  the head of the queue and block every event behind it forever.
-- **401 and 403 are exempt from that count and are never discarded.** Those mean
-  the integration is misconfigured, not that the data is bad; dropping real
-  events over a mistyped key would be data loss caused by a fixable error.
-
-Live tests must therefore assert *eventual* delivery, not single-pass delivery.
-A strict one-pass assertion failed against a real transient 400 while the SDK
-had behaved exactly correctly — all 55 events were still queued, none lost.
+Live tests still retry the flush, which covers 5xx, 429 and network failures;
+they no longer survive a transient 400.
 
 ## Batch size
 
