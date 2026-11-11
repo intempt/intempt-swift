@@ -327,6 +327,13 @@ records the gap at §8 item 37 under `EXP-SERVE-001`. Once a caller can tell "no
 from "no answer", the objection no longer holds and the capability belongs in the SDKs — a
 feature flag that only one platform can read is not a feature flag.
 
+**Superseded by INT-7454 (Beso, 2026-11-11, round-2 CONTRACT S3):** `variationDetail` is now
+public in every SDK. It does not guess a reason: a failed request reads `error` with a
+`FlagError {key, kind: auth | bad_request | server | timeout | network | parse, status}`, an
+answered request that served nothing reads `off`, and Swift reads a served value without a wire
+reason as `unanswered`. `onFlagError` reports every failure. The text below is the earlier
+reasoning, kept for the record.
+
 Until then, `variation()` ships and `variationDetail()` does not. That split is what makes
 the surface honest while the contract is pending: `variation` returns a VALUE, which is
 correct whether or not a reason exists, and the caller's required `defaultValue` covers the
@@ -339,7 +346,7 @@ method withheld is the one whose entire job is to give one.
 variation(key, context, defaultValue)         -> T
 allFlags(context)                             -> Map<key, value>
 
-variationDetail(key, context, defaultValue)   -> WITHHELD, see rule 3
+variationDetail(key, context, defaultValue)   -> {value, reason, error?}   (INT-7454)
 
 boolVariation   (key, context, defaultValue: Bool)
 stringVariation (key, context, defaultValue: String)
@@ -428,6 +435,8 @@ exists to prevent. Verify per repository, against its default branch, on the dat
 | `intemptjs` | the only platform with assignment today | out of contract scope, tracked separately |
 
 #### Gate
+
+The `variationDetail` half of this gate is lifted by INT-7454; see the note above the surface.
 
 **No SDK PUBLISHES `variationDetail()` before the serving contract lands, and no SDK
 publishes `variation()` without a required `defaultValue`.** A published method name cannot

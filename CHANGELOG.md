@@ -18,6 +18,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`variationDetail` and `onFlagError` (INT-7454).** A flag request that failed used to read
+  exactly like "flag not configured": the default, no log, no signal. `variationDetail(key:)`
+  returns `FlagDetail { value, reason, error }`: `reason` is `.error` with a `FlagError { key,
+  kind: auth | badRequest | server | timeout | network | parse, status }` on a failure, `.off`
+  when the service answered and served nothing, and `.unanswered` for a served value (the
+  serving response sends no reason). `onFlagError` is called for every failed flag request,
+  `allFlags` included, and a 401/403 is logged at error level once per instance, naming the API
+  key prefix and source. The default is still returned and nothing throws. `FlagReason` gains
+  `.error` and is now public.
 - **`IntemptInstance.onDeliveryFailure` (INT-7444).** Called once per batch on its final outcome
   with a `DeliveryFailure { kind: transport | terminal | dropped, status, eventCount, eventIds,
   retryAfter, terminal }`. A `transport` failure (batch kept) is reported once per batch, not on
