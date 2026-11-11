@@ -316,7 +316,7 @@ final class PushWebhookSender {
     /// the statuses worth repeating.
     static func isWorthRetrying(_ outcome: HTTPOutcome) -> Bool {
         switch outcome {
-        case .retryable, .transport: return true
+        case .retryable, .transport, .unanswered: return true
         case .success, .terminal: return false
         }
     }

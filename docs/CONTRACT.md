@@ -15,9 +15,9 @@ a spec or from the JS SDK alone — where the two disagreed, the live response w
 | Wrong secret | **401** |
 | No `Authorization` header | **401** |
 
-401 is classified terminal — retrying a bad credential cannot succeed, but the
-queued events are **kept**, because the data is valid and the integration is
-what's broken.
+401 is classified terminal and, since INT-7436, the batch is dropped and reported through
+`onDeliveryFailure` rather than kept: a kept 401 grew the queue to its cap with nothing telling the
+integrator. See "Failure policy" below.
 
 ## `POST /{org}/projects/{project}/sources/{sourceId}/track`
 
@@ -73,8 +73,8 @@ Returns **200** when push-source accepts it. Since `ConsentService.normalizeVali
 (push-source fa775720, 2026-10-16) it returns **400** for a `validUntil` that is not
 `unlimited`, `-1`, empty, an epoch in seconds or milliseconds between 2010 and 2040, or an ISO-8601
 date. A raw duration such as `31536000`, or `0`, is a 400. Before INT-5956 the SDK sent exactly
-that. A consent rejected 400/413/422 three times in a row is dropped with an error log; 401, 403
-and 5xx are kept and retried.
+that. A consent follows the same failure policy as an event batch (INT-7436): only a request that
+never reached the server is kept.
 
 ## `POST /{org}/projects/{project}/optimization/choose-api`
 
@@ -200,16 +200,11 @@ Production has been observed returning **400 to a payload it accepts moments
 later**. A 55-event drain failed its first batch with a 400; the identical
 bytes then returned 201 on six consecutive retries.
 
-Consequences, both implemented:
-
-- A terminal rejection **never deletes data on the first failure**. The SDK
-  keeps the batch and retries on the next flush.
-- A batch is discarded only after **3 consecutive** 400/413/422 rejections,
-  because a batch the server will genuinely never accept would otherwise sit at
-  the head of the queue and block every event behind it forever.
-- **401 and 403 are exempt from that count and are never discarded.** Those mean
-  the integration is misconfigured, not that the data is bad; dropping real
-  events over a mistyped key would be data loss caused by a fixable error.
+Until INT-7436 the SDK kept a 400 and dropped it only after three consecutive
+rejections, with 401/403 never dropped. Round-2 CONTRACT S1 (Beso, 2026-11-11)
+replaced that: every answered status other than 503/429 drops the batch on the
+first answer and reports it through `onDeliveryFailure`. A transient 400 of the
+kind above now costs that batch; the report is how it is seen.
 
 Live tests must therefore assert *eventual* delivery, not single-pass delivery.
 A strict one-pass assertion failed against a real transient 400 while the SDK
@@ -232,7 +227,6 @@ years, is safer than a value that merely looks tidier.
 
 ## Retry-After
 
-No `Retry-After` header was observed on any success or 4xx response. The
-`RetryPolicy` honours it as a floor when present and falls back to its own
-exponential curve when absent, so its absence is not a problem — but it means
+No `Retry-After` header was observed on any success or 4xx response. On a 503 or
+429 the one resend waits for it, clamped to 1–60 s, and 1 s when it is absent, so
 the header path is covered only by unit tests, not by a live observation.

@@ -5,6 +5,25 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Delivery sends each batch once; only 503 and 429 get one resend (INT-7436).** The wait before
+  that resend is `Retry-After` clamped to 1–60 s, 1 s when absent. Every other status the server
+  answers (400, 401–404, 408, 413, 422, 500, 502, 504, …) drops the batch on the first answer, and
+  so does a request that timed out after it was sent, since the server may already hold it. Only a
+  request that never reached the server (offline, DNS, connection refused) is kept for the next
+  flush. The exponential backoff, the three-strike rule and "401/403 kept forever" are gone.
+  Consents follow the same policy. **Behaviour change:** events that used to sit in the queue on a
+  bad key or a 5xx are now dropped and reported.
+
+### Added
+
+- **`IntemptInstance.onDeliveryFailure` (INT-7444).** Called once per batch on its final outcome
+  with a `DeliveryFailure { kind: transport | terminal | dropped, status, eventCount, eventIds,
+  retryAfter, terminal }`. A `transport` failure (batch kept) is reported once per batch, not on
+  every flush. `track` and the other recording calls still return only whether the event was
+  queued and never fail for a delivery problem.
+
 ## [0.5.0] — unreleased
 
 ### Fixed

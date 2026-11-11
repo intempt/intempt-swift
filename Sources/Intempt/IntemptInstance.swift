@@ -451,6 +451,18 @@ public final class IntemptInstance {
         set { flusher.flushInterval = newValue }
     }
 
+    /// Called once for each batch that is not delivered, on its final outcome (INT-7444).
+    ///
+    /// `track` and the other recording calls return only whether the event was queued and never
+    /// fail for a delivery problem; this is where one surfaces. A `.transport` failure means the
+    /// batch never reached the server and is still queued; it is reported once, not on every
+    /// flush. Every other kind means the events are gone. Runs on the SDK's delivery queue, not
+    /// main, so hop to main before touching UI.
+    public var onDeliveryFailure: ((DeliveryFailure) -> Void)? {
+        get { flusher.onDeliveryFailure }
+        set { flusher.onDeliveryFailure = newValue }
+    }
+
     /// Sends everything queued now.
     /// - Parameter completion: number of events delivered.
     public func flush(completion: ((Int) -> Void)? = nil) {

@@ -28,7 +28,12 @@ enum HTTPOutcome: Equatable {
     /// Carries the response body so the caller can surface the server's own
     /// message (`{"errors":[{"message":…}]}`) instead of a bare status code.
     case terminal(status: Int, body: Data?)
+    /// Never reached the server (offline, DNS, refused). Nothing was received, so the batch is
+    /// kept for the next flush.
     case transport(String)
+    /// Sent but never answered, a timeout above all. The server may hold the batch already, so it
+    /// is not resent: a resend risks a duplicate (round-2 CONTRACT S1.4).
+    case unanswered(String)
 
     var isSuccess: Bool { if case .success = self { return true } else { return false } }
 }
@@ -98,7 +103,9 @@ final class Network {
     /// under URLSession an HTTP 500 arrives with a nil error.
     static func classify(data: Data?, response: URLResponse?, error: Error?) -> HTTPOutcome {
         if let error {
-            return .transport(error.localizedDescription)
+            return neverReachedServer(error)
+                ? .transport(error.localizedDescription)
+                : .unanswered(error.localizedDescription)
         }
         guard let http = response as? HTTPURLResponse else {
             return .transport("no HTTP response")
@@ -110,10 +117,29 @@ final class Network {
         case let s where APIConstants.retryableStatuses.contains(s):
             return .retryable(status: s, retryAfter: retryAfter(from: http))
         default:
-            // 401/403 (bad credentials), 402 (analytics capped), 400/422
-            // (malformed) — retrying cannot help.
+            // Final: 4xx is refused again byte for byte, and a 5xx other than
+            // 503 may already have been processed (see `retryableStatuses`).
             return .terminal(status: http.statusCode, body: data)
         }
+    }
+
+    /// URL errors raised before a byte of the request could leave the device. Anything else may
+    /// have been received, so it is `.unanswered`, not `.transport`.
+    static let neverReachedCodes: Set<Int> = [
+        NSURLErrorNotConnectedToInternet,
+        NSURLErrorCannotFindHost,
+        NSURLErrorCannotConnectToHost,
+        NSURLErrorDNSLookupFailed,
+        NSURLErrorInternationalRoamingOff,
+        NSURLErrorCallIsActive,
+        NSURLErrorDataNotAllowed,
+        NSURLErrorSecureConnectionFailed,
+        NSURLErrorAppTransportSecurityRequiresSecureConnection,
+    ]
+
+    static func neverReachedServer(_ error: Error) -> Bool {
+        let ns = error as NSError
+        return ns.domain == NSURLErrorDomain && neverReachedCodes.contains(ns.code)
     }
 
     /// Honours the server's own backoff instruction, in both the delta-seconds

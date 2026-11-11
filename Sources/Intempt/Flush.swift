@@ -25,18 +25,21 @@
 //
 //    4. ONE FAILURE ENDS THE DRAIN. Upstream keeps walking batches after a
 //       failure. Against a server that is down that is 100 pointless requests;
-//       here the first retryable failure stops the pass and the backoff window
-//       decides when to try again.
+//       here the first failed batch stops the pass and the next flush resumes.
 //
 //    5. CONSENT GOES FIRST, ON ITS OWN ENDPOINT. A withdrawal reaching the
-//       server matters more than analytics throughput. A *terminal* consent
-//       failure does not block events, though — a consent-specific
-//       misconfiguration must not strand every event in the queue. A consent
-//       rejected 400/413/422 three times running is dropped, like a batch.
+//       server matters more than analytics throughput. A failed consent does
+//       not block events, though: they drain after it either way.
 //
 //    6. NO GZIP. Upstream compresses. Verified against production: the
 //       endpoint returns HTTP 400 for `Content-Encoding: gzip`
 //       (docs/CONTRACT.md), so porting that path would fail every request.
+//
+//    7. ONE RESEND, THEN A VERDICT (INT-7436). Upstream keeps and retries
+//       every non-2xx with exponential backoff. Here 503/429 get one resend
+//       after Retry-After, every other answer drops the batch, and only a
+//       request that never reached the server is kept (`RetryPolicy`). Each
+//       final failure is reported once through `onDeliveryFailure` (INT-7444).
 //
 import Foundation
 
@@ -55,12 +58,32 @@ final class Flush {
     let trackEndpoint: Endpoint
     private let consentEndpoint: Endpoint
 
-    /// Sole owner of `policy`, `inFlight` and `waiters`. Every private method
-    /// below must be called on it, and every completion is invoked on it.
+    /// Sole owner of `inFlight`, `waiters` and the two `transportReported` sets.
+    /// Every private method below must be called on it, and every completion is
+    /// invoked on it.
     private let queue = DispatchQueue(label: "com.intempt.flush", qos: .utility)
-    private var policy: RetryPolicy
     private var inFlight = false
     private var waiters: [(Int) -> Void] = []
+
+    /// Defers the one 503/429 resend. Injected so a test does not spend a real
+    /// Retry-After of up to 60 s; the work it runs hops back onto `queue`.
+    private let resendScheduler: (TimeInterval, @escaping () -> Void) -> Void
+
+    /// Head row ids of kept batches (and consent row ids) whose transport
+    /// failure was already reported. S2 reports it once per batch: an offline
+    /// device would otherwise report the same batch on every flush.
+    private var transportReported: Set<Int32> = []
+    private var consentTransportReported: Set<Int32> = []
+
+    private let listenerLock = ReadWriteLock(label: "com.intempt.flush.listener")
+    private var _onDeliveryFailure: ((DeliveryFailure) -> Void)?
+
+    /// Called on this class's delivery queue, once per batch, on its final
+    /// outcome. See `IntemptInstance.onDeliveryFailure`.
+    var onDeliveryFailure: ((DeliveryFailure) -> Void)? {
+        get { listenerLock.read { _onDeliveryFailure } }
+        set { listenerLock.write { _onDeliveryFailure = newValue } }
+    }
 
     /// Only ever touched on the main thread — a `Timer` must be invalidated on
     /// the run loop that scheduled it.
@@ -87,7 +110,9 @@ final class Flush {
         projectId: String,
         sourceId: String,
         useIPAddressForGeolocation: Bool = true,
-        policy: RetryPolicy = RetryPolicy()
+        resendScheduler: @escaping (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay, execute: work)
+        }
     ) {
         self.db = db
         self.network = network
@@ -96,7 +121,7 @@ final class Flush {
             org: orgId, project: projectId, sourceId: sourceId,
             useIPForGeolocation: useIPAddressForGeolocation)
         self.consentEndpoint = .consents(org: orgId, project: projectId)
-        self.policy = policy
+        self.resendScheduler = resendScheduler
 
         // Modification 2: recover anything a previous process left claimed.
         db.releaseAllClaims(.events)
@@ -158,8 +183,8 @@ final class Flush {
 
     // MARK: - Entry point
 
-    /// Sends everything queued, oldest first, stopping at the first retryable
-    /// failure or when the backoff window is closed.
+    /// Sends everything queued, oldest first, stopping at the first batch that
+    /// fails.
     ///
     /// - Parameter completion: receives the number of **events** delivered.
     ///   Overlapping calls coalesce: the second caller's completion fires with
@@ -189,8 +214,6 @@ final class Flush {
     /// Recursive one-batch-at-a-time drain. Must be called on `queue`;
     /// `done` is invoked on `queue`.
     private func drainEvents(sent: Int, done: @escaping (Int) -> Void) {
-        guard !policy.requestNotAllowed else { return done(sent) }
-
         let rows = db.read(.events, limit: APIConstants.maxBatchSize, flag: false)
         guard !rows.isEmpty else { return done(sent) }
 
@@ -233,121 +256,95 @@ final class Flush {
         // Modification 1: claim before the POST, never mark as sent.
         db.setFlag(.events, ids: goodIds, to: true)
 
+        // The id lives in the payload item, not on the entry (`toEnvelopeEntry`).
+        let eventIds = entries.compactMap {
+            ($0["payload"] as? [[String: Any]])?.first?["eventId"] as? String
+        }
+        let head = goodIds[0]
+
+        deliver(request) { outcome in
+            switch RetryPolicy.disposition(for: outcome) {
+            case .deleteBatch:
+                self.db.delete(.events, ids: goodIds)
+                self.transportReported.remove(head)
+                self.drainEvents(sent: sent + goodIds.count, done: done)
+
+            case .keepForNextFlush:
+                // Modifications 1 and 4: release the claim so the rows are
+                // visible to the next pass, and stop rather than hammer.
+                self.db.setFlag(.events, ids: goodIds, to: false)
+                if self.transportReported.insert(head).inserted {
+                    self.report(
+                        .transport, outcome: outcome, eventCount: goodIds.count, eventIds: eventIds)
+                }
+                done(sent)
+
+            case .drop(let kind):
+                self.db.delete(.events, ids: goodIds)
+                self.transportReported.remove(head)
+                self.report(kind, outcome: outcome, eventCount: goodIds.count, eventIds: eventIds)
+                done(sent)
+            }
+        }
+    }
+
+    /// Sends `request` and, for a first 503/429 only, once more after the
+    /// clamped Retry-After. The claim stays held through the wait, so no other
+    /// pass can pick the rows up. `done` receives the final outcome, on `queue`.
+    private func deliver(
+        _ request: URLRequest,
+        isResend: Bool = false,
+        done: @escaping (HTTPOutcome) -> Void
+    ) {
         network.send(request) { [weak self] outcome in
             guard let self else { return }
             self.queue.async {
-                switch self.policy.apply(outcome) {
-                case .deleteBatch:
-                    self.db.delete(.events, ids: goodIds)
-                    self.strikes.removeValue(forKey: goodIds[0])
-                    self.drainEvents(sent: sent + goodIds.count, done: done)
-
-                case .keepAndRetry:
-                    // Modifications 1 and 4: release the claim so the rows are
-                    // visible to the next pass, and stop rather than hammer.
-                    self.db.setFlag(.events, ids: goodIds, to: false)
-                    self.strikes.removeValue(forKey: goodIds[0])
-                    done(sent)
-
-                case .keepAndStop:
-                    self.db.setFlag(.events, ids: goodIds, to: false)
-                    self.recordTerminal(outcome, ids: goodIds)
-                    done(sent)
+                guard let delay = RetryPolicy.resendDelay(after: outcome, isResend: isResend)
+                else { return done(outcome) }
+                self.resendScheduler(delay) { [weak self] in
+                    guard let self else { return }
+                    self.queue.async { self.deliver(request, isResend: true, done: done) }
                 }
             }
         }
     }
 
-    /// Consecutive terminal rejections for the batch starting at a given row id.
-    private var strikes: [Int32: Int] = [:]
+    /// Logs and hands one final failure to the listener. Must be called on `queue`.
+    private func report(
+        _ kind: DeliveryFailure.Kind,
+        outcome: HTTPOutcome,
+        eventCount: Int,
+        eventIds: [String]
+    ) {
+        var status: Int?
+        var retryAfter: TimeInterval?
+        var detail = ""
+        switch outcome {
+        case .retryable(let s, let after):
+            status = s
+            retryAfter = after
+        case .terminal(let s, let body):
+            status = s
+            detail = IntemptError.serverMessages(from: body).map { ": " + $0.joined(separator: "; ") } ?? ""
+        case .transport(let description), .unanswered(let description):
+            detail = ": " + description
+        case .success:
+            break
+        }
 
-    /// Statuses that mean "these bytes will never be accepted" as opposed to
-    /// "your credentials are wrong". A misconfigured key must never cost data;
-    /// a permanently malformed batch must never block the queue forever.
-    private static let payloadRejections: Set<Int> = [400, 413, 422]
-
-    /// How many terminal rejections a batch may take before it is discarded.
-    private static let maxStrikes = 3
-
-    /// Decides whether a terminally-rejected batch should be dropped.
-    ///
-    /// Without this a batch the server will never accept sits at the head of
-    /// the queue and fails every flush forever, blocking every event behind it
-    /// — the same shape as the poison-row problem, one level up. Neither
-    /// upstream nor the old Obj-C SDK has any notion of it.
-    ///
-    /// 401 and 403 are deliberately exempt: those mean the integration is
-    /// misconfigured, the data is fine, and dropping it would destroy real
-    /// events over a fixable mistake.
-    ///
-    /// Three strikes rather than one because production has been observed
-    /// returning a transient 400 to a payload it accepts on the next attempt
-    /// (docs/CONTRACT.md).
-    private func recordTerminal(_ outcome: HTTPOutcome, ids: [Int32]) {
-        guard case .terminal(let status, let body) = outcome,
-            Self.payloadRejections.contains(status),
-            let head = ids.first
-        else { return }
-
-        let count = (strikes[head] ?? 0) + 1
-        strikes[head] = count
-
-        guard count >= Self.maxStrikes else {
+        let what = status.map { "\(kind.rawValue) \($0)" } ?? kind.rawValue
+        if kind == .transport {
             IntemptLogger.shared.log(
-                .warning,
-                "batch rejected with \(status) (attempt \(count)/\(Self.maxStrikes)); keeping")
-            return
-        }
-
-        let detail =
-            IntemptError.serverMessages(from: body)?.joined(separator: "; ")
-            ?? "no message"
-        IntemptLogger.shared.log(
-            .error,
-            "dropping \(ids.count) event(s) after \(count) rejections with \(status): \(detail). "
-                + "These events will never be accepted; keeping them would block the queue.")
-        db.delete(.events, ids: ids)
-        strikes.removeValue(forKey: head)
-    }
-
-    /// Consecutive terminal rejections for a consent record, by row id.
-    private var consentStrikes: [Int32: Int] = [:]
-
-    /// `recordTerminal` for a consent record: the same statuses and the same
-    /// three strikes, so a consent the server will never accept stops being
-    /// resent on every flush and launch. 401 and 403 stay exempt, and so does
-    /// every retryable failure: a withdrawal must never be lost to a bad key
-    /// or an outage.
-    ///
-    /// - Returns: whether the record was dropped.
-    private func recordConsentTerminal(_ outcome: HTTPOutcome, id: Int32) -> Bool {
-        guard case .terminal(let status, let body) = outcome else { return false }
-        guard Self.payloadRejections.contains(status) else {
-            // A 401 or 403 in between breaks the run: strikes count consecutive rejections.
-            consentStrikes.removeValue(forKey: id)
-            return false
-        }
-
-        let count = (consentStrikes[id] ?? 0) + 1
-        consentStrikes[id] = count
-
-        guard count >= Self.maxStrikes else {
+                .warning, "\(eventCount) event(s) not delivered (\(what)\(detail)); kept for the next flush")
+        } else {
             IntemptLogger.shared.log(
-                .warning,
-                "consent rejected with \(status) (attempt \(count)/\(Self.maxStrikes)); keeping")
-            return false
+                .error, "dropping \(eventCount) event(s) (\(what)\(detail)); they will not be resent")
         }
 
-        let detail =
-            IntemptError.serverMessages(from: body)?.joined(separator: "; ")
-            ?? "no message"
-        IntemptLogger.shared.log(
-            .error,
-            "dropping consent record after \(count) rejections with \(status): \(detail). "
-                + "It will never be accepted; keeping it would block every consent behind it.")
-        db.delete(.consents, ids: [id])
-        consentStrikes.removeValue(forKey: id)
-        return true
+        onDeliveryFailure?(
+            DeliveryFailure(
+                kind: kind, status: status, eventCount: eventCount, eventIds: eventIds,
+                retryAfter: retryAfter))
     }
 
     // MARK: - Consents
@@ -355,8 +352,6 @@ final class Flush {
     /// One request per consent record — the endpoint takes a flat body, not a
     /// batch. Must be called on `queue`; `done` is invoked on `queue`.
     private func drainConsents(done: @escaping () -> Void) {
-        guard !policy.requestNotAllowed else { return done() }
-
         let rows = db.read(.consents, limit: 1, flag: false)
         guard let row = rows.first else { return done() }
 
@@ -378,45 +373,41 @@ final class Flush {
 
         db.setFlag(.consents, ids: [row.id], to: true)
 
-        network.send(request) { [weak self] outcome in
-            guard let self else { return }
-            self.queue.async {
-                switch self.policy.apply(outcome) {
-                case .deleteBatch:
-                    self.db.delete(.consents, ids: [row.id])
-                    self.consentStrikes.removeValue(forKey: row.id)
-                    self.drainConsents(done: done)
+        deliver(request) { outcome in
+            switch RetryPolicy.disposition(for: outcome) {
+            case .deleteBatch:
+                self.db.delete(.consents, ids: [row.id])
+                self.consentTransportReported.remove(row.id)
+                self.drainConsents(done: done)
 
-                case .keepAndRetry:
-                    // Server-side or transport trouble: events would fail too.
-                    self.db.setFlag(.consents, ids: [row.id], to: false)
-                    self.consentStrikes.removeValue(forKey: row.id)
-                    done()
-
-                case .keepAndStop:
-                    // Modification 5: a terminal consent failure is specific to
-                    // consent. Keep the record, but let events proceed rather
-                    // than stranding the entire queue behind it.
-                    self.db.setFlag(.consents, ids: [row.id], to: false)
-                    // Consents drain one at a time, oldest first, so a record
-                    // the server will never accept blocks every consent behind
-                    // it, a later withdrawal included. Once dropped, move on.
-                    guard self.recordConsentTerminal(outcome, id: row.id) else { return done() }
-                    self.drainConsents(done: done)
+            case .keepForNextFlush:
+                self.db.setFlag(.consents, ids: [row.id], to: false)
+                if self.consentTransportReported.insert(row.id).inserted {
+                    self.report(.transport, outcome: outcome, eventCount: 1, eventIds: [])
                 }
+                done()
+
+            case .drop(let kind):
+                // Consents follow the same table as events (CONTRACT S1). Dropping
+                // also unblocks every consent queued behind this one, a later
+                // withdrawal included.
+                self.db.delete(.consents, ids: [row.id])
+                self.consentTransportReported.remove(row.id)
+                self.report(kind, outcome: outcome, eventCount: 1, eventIds: [])
+                done()
             }
         }
     }
 
     // MARK: - Test seams
 
-    var consecutiveFailures: Int { queue.sync { policy.consecutiveFailures } }
-    /// Test seam. Also the reason success clears its entry: ids are never
-    /// reused (the table is AUTOINCREMENT), so an entry left behind after a
-    /// batch is deleted can never match again and would accumulate for the life
-    /// of the process.
-    var trackedStrikeCount: Int { queue.sync { strikes.count } }
-    var trackedConsentStrikeCount: Int { queue.sync { consentStrikes.count } }
+    /// Test seam. Also the reason delivery and drop clear their entry: ids are
+    /// never reused (the table is AUTOINCREMENT), so an entry left behind after
+    /// its rows are deleted can never match again and would accumulate for the
+    /// life of the process.
+    var trackedTransportReportCount: Int {
+        queue.sync { transportReported.count + consentTransportReported.count }
+    }
     /// Reads the intent flag, not the `Timer` — see `startTimer`.
     var isTimerRunning: Bool { timerLock.read { armed } }
 }

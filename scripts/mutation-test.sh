@@ -40,9 +40,10 @@ declare -a SURVIVORS
 # file | search | replace | invariant it breaks
 MUTANTS=(
 "Sources/Intempt/IntemptCredentials.swift|maxSplits: 1|maxSplits: 9|the API key splits on the FIRST dot only; a secret containing a dot must not be truncated into extra parts"
-"Sources/Intempt/Flush.swift|maxStrikes = 3|maxStrikes = 300|a payload the server keeps rejecting must be dropped after a bounded number of attempts, not retried forever"
+"Sources/Intempt/RetryPolicy.swift|case .transport: return .keepForNextFlush|case .transport: return .drop(.dropped)|a batch that never reached the server must be KEPT for the next flush; dropping it loses every event recorded offline (INT-7436)"
+"Sources/Intempt/Flush.swift|if self.transportReported.insert(head).inserted {|if true {|a kept batch is reported once, not on every flush an offline device attempts (INT-7444)"
 "Sources/Intempt/Push.swift|count >= 32|count >= 1|a stringified token (\"32 bytes\") must be rejected; accepting it registers a device that can never be reached"
-"Sources/Intempt/Constants.swift|[408, 429, 500, 502, 503, 504]|[408, 500, 502, 503, 504]|429 must be retryable; treating a rate limit as terminal discards the events"
+"Sources/Intempt/Constants.swift|[429, 503]|[503]|429 earns the one resend; treating a rate limit as final drops events the server asked to have resent (INT-7436)"
 "Sources/Intempt/IntemptDB.swift|ORDER BY time ASC|ORDER BY time DESC|eviction must drop the OLDEST rows; dropping newest throws away what just happened and keeps stale data"
 "Sources/Intempt/EventNames.swift|isValueChange ? editField : action|isValueChange ? action : editField|a control value change is Edit Field and a press is Action; swapping them mislabels every interaction"
 "Sources/Intempt/IdentityManager.swift|>= Self.sessionTimeout|> Self.sessionTimeout * 1000|the idle window is what ends a session; widening it means sessions never roll"

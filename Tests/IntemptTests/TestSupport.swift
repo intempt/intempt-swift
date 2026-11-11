@@ -34,6 +34,12 @@ final class MockSession: URLSessionProtocol {
                 status: 0, body: nil, headers: [:],
                 error: NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet))
         }
+        /// Sent, never answered: the server may hold the request already.
+        static func timedOut() -> Reply {
+            Reply(
+                status: 0, body: nil, headers: [:],
+                error: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
+        }
     }
 
     private let lock = NSLock()

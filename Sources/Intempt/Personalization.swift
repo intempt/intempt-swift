@@ -181,7 +181,7 @@ final class Personalization {
                     completion(.failure(.terminal(status: status)))
                 }
 
-            case .transport(let description):
+            case .transport(let description), .unanswered(let description):
                 completion(.failure(.transport(description: description)))
             }
         }

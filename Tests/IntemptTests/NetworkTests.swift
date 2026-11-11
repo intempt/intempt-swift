@@ -58,7 +58,11 @@ final class NetworkTests: XCTestCase {
         for status in [500, 502, 503, 504] {
             let outcome = Network.classify(data: nil, response: response(status), error: nil)
             XCTAssertFalse(outcome.isSuccess, "\(status) must never classify as success")
-            XCTAssertEqual(outcome, .retryable(status: status, retryAfter: nil))
+            XCTAssertEqual(
+                outcome,
+                status == 503
+                    ? .retryable(status: status, retryAfter: nil)
+                    : .terminal(status: status, body: nil))
         }
     }
 
@@ -69,17 +73,19 @@ final class NetworkTests: XCTestCase {
         }
     }
 
+    /// INT-7436: only these earn the one resend.
     func testRetryableStatuses() {
-        for status in [408, 429] {
+        for status in [429, 503] {
             XCTAssertEqual(
                 Network.classify(data: nil, response: response(status), error: nil),
                 .retryable(status: status, retryAfter: nil))
         }
     }
 
-    /// Retrying a bad credential or a capped account can never succeed.
+    /// Retrying a bad credential or a capped account can never succeed, and a
+    /// 408/500/502/504 may already have been processed (INT-7436).
     func testTerminalStatuses() {
-        for status in [400, 401, 402, 403, 404, 422] {
+        for status in [400, 401, 402, 403, 404, 408, 413, 422, 500, 502, 504] {
             XCTAssertEqual(
                 Network.classify(data: nil, response: response(status), error: nil),
                 .terminal(status: status, body: nil),
@@ -91,6 +97,23 @@ final class NetworkTests: XCTestCase {
         let err = NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
         let outcome = Network.classify(data: nil, response: nil, error: err)
         if case .transport = outcome {} else { XCTFail("expected transport failure, got \(outcome)") }
+    }
+
+    /// A timeout is not "never reached": the request may have been received, so
+    /// it must not be kept and resent (INT-7436, CONTRACT S1.4).
+    func testTimeoutIsUnansweredNotTransport() {
+        let err = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+        let outcome = Network.classify(data: nil, response: nil, error: err)
+        if case .unanswered = outcome {} else { XCTFail("expected unanswered, got \(outcome)") }
+    }
+
+    func testOnlyPreConnectionErrorsCountAsNeverReached() {
+        for code in [NSURLErrorNotConnectedToInternet, NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost] {
+            XCTAssertTrue(Network.neverReachedServer(NSError(domain: NSURLErrorDomain, code: code)), "\(code)")
+        }
+        for code in [NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost] {
+            XCTAssertFalse(Network.neverReachedServer(NSError(domain: NSURLErrorDomain, code: code)), "\(code)")
+        }
     }
 
     func testMissingHTTPResponseIsTransportFailure() {

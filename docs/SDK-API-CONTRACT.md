@@ -516,15 +516,15 @@ One error type across platforms, with these cases:
 | `missingIdentity` | required identifier absent for the event type |
 | `encodingFailed` | payload would not serialize |
 | `terminal(status)` | will never succeed on retry |
-| `retryable(status, retryAfter?)` | retry with backoff |
+| `retryable(status, retryAfter?)` | 503 or 429: one resend after `Retry-After` (INT-7436) |
 | `transport(description)` | network layer failed |
 | `storageUnavailable(reason)` | queue could not persist |
 | `server(status, messages)` | server rejected with detail |
 
-The terminal/retryable split is contractual. `401` is terminal — a bad credential cannot
-succeed on retry — but queued events are **kept**, because the data is valid and the
-integration is what is broken. Deleting them on 401 is total silent data loss, and it has
-already happened once in the Android transport.
+The terminal/retryable split is contractual. Since INT-7436 (round-2 CONTRACT S1) a batch is
+sent once; 503 and 429 get one resend; every other answer, `401` included, drops the batch and
+reports it once through `onDeliveryFailure` (INT-7444), so the loss is never silent. Only a
+request that never reached the server is kept for the next flush.
 
 ## Bridging rules for React Native
 
