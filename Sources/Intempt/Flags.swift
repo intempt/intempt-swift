@@ -152,10 +152,12 @@ final class Flags {
         !key.isEmpty && key.unicodeScalars.allSatisfy(allowedKeyCharacters.contains)
     }
 
+    /// - Parameter exposure: false evaluates without recording an exposure (INT-7456).
     func detail(
         key: String,
         context: FlagContext,
         sessionId: String?,
+        exposure: Bool = true,
         completion: @escaping (FlagEvaluation) -> Void
     ) {
         guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -177,7 +179,8 @@ final class Flags {
             return completion(failed(.badRequest, status: nil, key: key))
         }
 
-        choose(context: context, sessionId: sessionId, names: [key]) { choices, error in
+        choose(context: context, sessionId: sessionId, names: [key], exposure: exposure) {
+            choices, error in
             if let error {
                 return completion(FlagEvaluation(value: nil, reason: .error, error: error))
             }
@@ -194,21 +197,18 @@ final class Flags {
 
     /// Every key this person qualifies for.
     ///
-    /// HAZARD, and it is a server-side one: `ExperienceChooserService.chooseApi` records a
-    /// display for EVERY experience it retrieves, before variant choice. For an experience
-    /// configured `ONCE`, a single `all()` therefore burns the once-only display for every
-    /// qualifying experience at once — including ones the app never renders — and a later
-    /// `detail(key:)` for such a key drops out of `choices` and resolves to the caller's
-    /// default, permanently and indistinguishably from "not enrolled". It also inflates the
-    /// exposure counts `EXP-SERVE-003` makes load-bearing for results. A non-recording read
-    /// mode is an audience-service change; until it exists, prefer `detail(key:)` per key on
-    /// any project that uses `ONCE`.
+    /// Evaluation only: sends `exposure: false` (INT-7456, round-2 CONTRACT S4), so the service
+    /// spends no `ONCE` display and records no exposure for experiences the app may never
+    /// render. Before that field, a single `all()` burned the once-only display for every
+    /// qualifying experience and inflated the exposure counts `EXP-SERVE-003` relies on. A
+    /// service that predates the field ignores it and still records; the exposure for a value
+    /// the app does use is recorded by the single-key read that renders it.
     func all(
         context: FlagContext,
         sessionId: String?,
         completion: @escaping ([String: JSONValue]) -> Void
     ) {
-        choose(context: context, sessionId: sessionId, names: nil) { choices, _ in
+        choose(context: context, sessionId: sessionId, names: nil, exposure: false) { choices, _ in
             var out: [String: JSONValue] = [:]
             for choice in choices {
                 guard let name = Flags.string(choice["name"]), !name.isEmpty else { continue }
@@ -232,6 +232,7 @@ final class Flags {
         context: FlagContext,
         sessionId: String?,
         names: [String]?,
+        exposure: Bool,
         completion: @escaping ([[String: Any]], FlagError?) -> Void
     ) {
         let key = names?.first
@@ -251,6 +252,8 @@ final class Flags {
         // `ExperienceChoose` with "default", which makes session-level analysis unattributable.
         if let sessionId, !sessionId.isEmpty { body["sessionId"] = sessionId }
         if let names { body["names"] = names }
+        // Absent means "record", the service's default, so a true is never sent.
+        if !exposure { body["exposure"] = false }
 
         let request: URLRequest
         do {

@@ -388,3 +388,41 @@ final class HookCalls {
         lock.unlock()
     }
 }
+
+/// INT-7456 (round-2 CONTRACT S4): evaluation is separated from exposure.
+extension FlagsDetailTests {
+
+    private func rawBody(_ session: MockSession) -> String {
+        session.requests.first?.httpBody.map { String(decoding: $0, as: UTF8.self) } ?? ""
+    }
+
+    func testAllFlagsAsksTheServiceNotToRecordAnExposure() {
+        let (f, session) = flags([.json(200, #"{"choices":[]}"#)])
+        _ = all(f)
+        // The raw bytes, not the decoded value: a decoded 0 also reads as `false` through `as? Bool`.
+        XCTAssertTrue(rawBody(session).contains(#""exposure":false"#), rawBody(session))
+    }
+
+    func testASingleFlagReadRecordsTheExposureByOmittingTheField() {
+        // Absent is the service's "record" default, and what every SDK before this one sent.
+        let (f, session) = flags([.json(200, #"{"choices":[]}"#)])
+        _ = detail(f, "k")
+        XCTAssertNil(session.bodies.first?["exposure"])
+    }
+}
+
+extension VariationDetailTests {
+
+    func testDisableExposureEvaluatesWithoutRecording() throws {
+        let session = MockSession(replies: [.json(200, #"{"choices":[]}"#)], fallback: .status(500))
+        let sdk = try IntemptInstance.makeForTesting(
+            store: defaults, databaseDirectory: tempDir, network: Network(session: session))
+        let done = expectation(description: "boolVariation")
+        sdk.boolVariation(key: "k", defaultValue: false, disableExposure: true) { _ in done.fulfill() }
+        wait(for: [done], timeout: 2)
+
+        let raw = session.requests.first?.httpBody.map { String(decoding: $0, as: UTF8.self) } ?? ""
+        XCTAssertTrue(raw.contains(#""exposure":false"#), raw)
+        XCTAssertEqual(session.bodies.first?["names"] as? [String], ["k"])
+    }
+}

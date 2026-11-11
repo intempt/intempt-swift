@@ -167,10 +167,11 @@ Every key at once:
 intempt.allFlags { values in … }   // [String: JSONValue]
 ```
 
-One request instead of N, and that is the cost as well as the point: the service
-records a display for every experience it returns, so on a project using the
-`ONCE` display mode this consumes the once-only display for keys your app never
-renders. Prefer the per-key call where that matters.
+One request instead of N, and it evaluates only: it asks the service not to
+record an exposure or spend a `ONCE` display (INT-7456). Read the value you
+render with `variation(key:)`, which records it. Pass `disableExposure: true` to
+a single-key read made ahead of rendering. A service that predates the
+`exposure` field ignores it and records as before.
 
 ```swift
 intempt.waitForInitialization { … }   // calls back immediately

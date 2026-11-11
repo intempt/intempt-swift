@@ -503,13 +503,20 @@ public final class IntemptInstance {
     /// Ask for a KEY, never a mode. Whether the key names an experiment, a personalization or a
     /// flag is the platform's business: its serving query filters on channel and status and never
     /// on mode.
+    ///
+    /// - Parameter disableExposure: true evaluates without recording an exposure, for a value read
+    ///   ahead of rendering it (pre-render, prefetch). Leave it false where the value is shown:
+    ///   that read is what counts the person as exposed (INT-7456).
     public func variation(
         key: String,
         context: FlagContext? = nil,
         defaultValue: JSONValue,
+        disableExposure: Bool = false,
         completion: @escaping (JSONValue) -> Void
     ) {
-        variationDetail(key: key, context: context, defaultValue: defaultValue) {
+        variationDetail(
+            key: key, context: context, defaultValue: defaultValue, disableExposure: disableExposure
+        ) {
             completion($0.value)
         }
     }
@@ -524,10 +531,13 @@ public final class IntemptInstance {
         key: String,
         context: FlagContext? = nil,
         defaultValue: JSONValue,
+        disableExposure: Bool = false,
         completion: @escaping (FlagDetail) -> Void
     ) {
         let resolved = resolvedFlagContext(context)
-        flags.detail(key: key, context: resolved, sessionId: identity.sessionId) { evaluation in
+        flags.detail(
+            key: key, context: resolved, sessionId: identity.sessionId, exposure: !disableExposure
+        ) { evaluation in
             completion(
                 FlagDetail(
                     value: evaluation.value ?? defaultValue,
@@ -555,13 +565,12 @@ public final class IntemptInstance {
         return FlagContext(userId: context?.userId, profileId: supplied ?? identity.profileId)
     }
 
-    /// Every key assigned to this person, in one call.
+    /// Every key assigned to this person, in one call, without recording an exposure (INT-7456).
     ///
-    /// One call, not one per key — and that is the cost as well as the point. The service records
-    /// a display for every experience it retrieves, so on a project using the `ONCE` display mode
-    /// this consumes the once-only display for every qualifying experience, including ones this
-    /// app never renders. Those keys then read as "not enrolled" forever. Use `variation(key:)`
-    /// per key where that matters; see the note on `Flags.all`.
+    /// Evaluation is separated from exposure: this asks the service not to record a display, so
+    /// an experience the app never renders is not counted and a `ONCE` display is not spent. Read
+    /// a value you render with `variation(key:)`, which records it. See the note on `Flags.all`
+    /// for a service that predates the field.
     public func allFlags(
         context: FlagContext? = nil,
         completion: @escaping ([String: JSONValue]) -> Void
@@ -576,9 +585,12 @@ public final class IntemptInstance {
         key: String,
         context: FlagContext? = nil,
         defaultValue: Bool,
+        disableExposure: Bool = false,
         completion: @escaping (Bool) -> Void
     ) {
-        variation(key: key, context: context, defaultValue: .bool(defaultValue)) { value in
+        variation(
+            key: key, context: context, defaultValue: .bool(defaultValue), disableExposure: disableExposure
+        ) { value in
             // A served value of the wrong type is a misconfiguration, not something to coerce:
             // the string "false" is truthy in most languages, and a silent coercion is
             // indistinguishable from a correct answer.
@@ -590,9 +602,12 @@ public final class IntemptInstance {
         key: String,
         context: FlagContext? = nil,
         defaultValue: String,
+        disableExposure: Bool = false,
         completion: @escaping (String) -> Void
     ) {
-        variation(key: key, context: context, defaultValue: .string(defaultValue)) { value in
+        variation(
+            key: key, context: context, defaultValue: .string(defaultValue), disableExposure: disableExposure
+        ) { value in
             if case .string(let s) = value { completion(s) } else { completion(defaultValue) }
         }
     }
@@ -601,9 +616,12 @@ public final class IntemptInstance {
         key: String,
         context: FlagContext? = nil,
         defaultValue: Double,
+        disableExposure: Bool = false,
         completion: @escaping (Double) -> Void
     ) {
-        variation(key: key, context: context, defaultValue: .number(defaultValue)) { value in
+        variation(
+            key: key, context: context, defaultValue: .number(defaultValue), disableExposure: disableExposure
+        ) { value in
             if case .number(let n) = value { completion(n) } else { completion(defaultValue) }
         }
     }
@@ -612,9 +630,12 @@ public final class IntemptInstance {
         key: String,
         context: FlagContext? = nil,
         defaultValue: [String: JSONValue],
+        disableExposure: Bool = false,
         completion: @escaping ([String: JSONValue]) -> Void
     ) {
-        variation(key: key, context: context, defaultValue: .object(defaultValue)) { value in
+        variation(
+            key: key, context: context, defaultValue: .object(defaultValue), disableExposure: disableExposure
+        ) { value in
             if case .object(let o) = value { completion(o) } else { completion(defaultValue) }
         }
     }

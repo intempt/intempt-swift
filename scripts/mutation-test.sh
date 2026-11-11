@@ -64,6 +64,7 @@ MUTANTS=(
 "Sources/Intempt/Flags.swift|?? .unanswered))|?? .off))|an unanswered evaluation must not read as a deliberate off state (EXP-SERVE-001); off there is a wrong answer, not a missing one"
 "Sources/Intempt/Flags.swift|return completion(FlagEvaluation(value: nil, reason: .error, error: error))|return completion(FlagEvaluation(value: nil, reason: .off))|a failed flag request must read .error with its FlagError, never as a deliberate off state (INT-7454)"
 "Sources/Intempt/Flags.swift|!key.isEmpty && key.unicodeScalars.allSatisfy(allowedKeyCharacters.contains)|!key.isEmpty|a key the server's ^[a-zA-Z0-9_-]*$ pattern rejects must not be sent; requestToMono refuses the whole body, and the caller cannot tell that refusal from \"no flag configured\""
+"Sources/Intempt/Flags.swift|if !exposure { body[\"exposure\"] = false }|if false { body[\"exposure\"] = false }|allFlags must evaluate WITHOUT recording; otherwise one bulk read spends every ONCE display and counts exposures the app never rendered (INT-7456)"
 "Sources/Intempt/Personalization.swift|return \"mobile\"|return \"tv\"|deviceClass must stay inside ExperienceDevice (all/desktop/mobile); \"tv\" is what this SDK actually sent from tvOS, and an unmappable value fails to bind the WHOLE request so every flag read silently returns the default"
 )
 

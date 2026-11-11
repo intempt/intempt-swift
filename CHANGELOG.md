@@ -27,6 +27,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `allFlags` included, and a 401/403 is logged at error level once per instance, naming the API
   key prefix and source. The default is still returned and nothing throws. `FlagReason` gains
   `.error` and is now public.
+- **Evaluation is separated from exposure (INT-7456).** `allFlags` sends `exposure: false`, so a
+  bulk read no longer records an exposure or spends a `ONCE` display for experiences the app never
+  renders. A single-key read (`variation`, `variationDetail`, the typed variations) records the
+  exposure as before; each takes `disableExposure: true` for a read made ahead of rendering. Needs
+  the audience-service change that reads the field; an older service ignores it.
 - **`IntemptInstance.onDeliveryFailure` (INT-7444).** Called once per batch on its final outcome
   with a `DeliveryFailure { kind: transport | terminal | dropped, status, eventCount, eventIds,
   retryAfter, terminal }`. A `transport` failure (batch kept) is reported once per batch, not on

@@ -92,7 +92,8 @@ reads it.
   "device":    "…",    // optional — all | desktop | mobile, and NOTHING else
   "sessionId": "…",    // optional
   "productId": "…",    // optional
-  "timestamp": 0       // optional
+  "timestamp": 0,      // optional
+  "exposure":  false   // optional — INT-7456: false = evaluate only, absent = record
 }
 ```
 
