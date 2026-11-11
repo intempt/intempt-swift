@@ -5,8 +5,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] — unreleased
+
 ### Fixed
 
+- **A caller's `FlagContext` keeps the stored profileId (INT-7453).** `variation` / `allFlags`
+  used a caller-supplied context as-is, so a `{userId}` context went without a profileId and an
+  empty one (what the React Native bridge builds) sent no identifier, got a 400 and resolved to
+  the default. The caller's `userId` is kept and the stored profileId fills in when the context's
+  is nil or empty, as intempt-android does.
 - **Consents are recorded again (INT-5956).** `consent(action:validUntil:)` documents
   `validUntil` as a duration in seconds, but the raw value was sent, and push-source accepts only
   an absolute epoch (2010–2040), `unlimited` or `-1`. So `31_536_000` and the documented
