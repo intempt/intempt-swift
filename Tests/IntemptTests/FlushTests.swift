@@ -545,6 +545,46 @@ extension FlushTests {
         XCTAssertEqual(failures.failures.first?.status, 400)
         XCTAssertEqual(failures.failures.first?.eventCount, 1)
     }
+
+    // MARK: - Consent age (android CONSENT_MAX_AGE_DAYS)
+
+    private func seedConsent(_ action: String, at time: Date = Date()) {
+        db.insert(.consents, data: JSONHandler.encodeAPIData(["action": action])!, at: time)
+    }
+
+    private func consentRequests() -> [[String: Any]] {
+        zip(session.requests, session.bodies)
+            .filter { $0.0.url!.absoluteString.hasSuffix("/consents/data") }
+            .map(\.1)
+    }
+
+    /// A consent kept while offline must not park the queue head forever:
+    /// past the age limit it is dropped without being sent.
+    func testAConsentOlderThanTheAgeLimitIsDroppedWithoutBeingSent() {
+        let now = Date()
+        seedConsent("accept", at: now.addingTimeInterval(-QueueConstants.consentMaxAge - 1))
+        seedConsent("reject", at: now)
+        let flush = makeFlush(fallback: .ok())
+
+        _ = flushSync(flush)
+        XCTAssertEqual(db.count(.consents), 0)
+        XCTAssertEqual(
+            consentRequests().map { $0["action"] as? String }, ["reject"],
+            "the expired head is dropped and the one behind it is sent")
+    }
+
+    func testAConsentJustInsideTheAgeLimitIsStillSent() {
+        seedConsent("accept", at: Date().addingTimeInterval(-QueueConstants.consentMaxAge + 60))
+        let flush = makeFlush(fallback: .ok())
+
+        _ = flushSync(flush)
+        XCTAssertEqual(consentRequests().count, 1)
+        XCTAssertEqual(db.count(.consents), 0)
+    }
+
+    func testTheConsentAgeLimitIsThirtyDays() {
+        XCTAssertEqual(QueueConstants.consentMaxAge, 30 * 24 * 60 * 60)
+    }
 }
 
 /// Written from the flush queue, read from the test thread.

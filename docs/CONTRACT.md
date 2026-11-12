@@ -74,7 +74,7 @@ Returns **200** when push-source accepts it. Since `ConsentService.normalizeVali
 `unlimited`, `-1`, empty, an epoch in seconds or milliseconds between 2010 and 2040, or an ISO-8601
 date. A raw duration such as `31536000`, or `0`, is a 400. Before INT-5956 the SDK sent exactly
 that. A consent follows the same failure policy as an event batch (INT-7436): only a request that
-never reached the server is kept.
+never reached the server is kept, and a consent still undelivered after 30 days is dropped.
 
 ## `POST /{org}/projects/{project}/optimization/choose-api`
 

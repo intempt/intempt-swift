@@ -355,6 +355,18 @@ final class Flush {
         let rows = db.read(.consents, limit: 1, flag: false)
         guard let row = rows.first else { return done() }
 
+        if let inserted = db.insertedAt(.consents, id: row.id),
+            Date().timeIntervalSince(inserted) > QueueConstants.consentMaxAge
+        {
+            IntemptLogger.shared.log(
+                .error,
+                "dropping consent record: undelivered for over "
+                    + "\(Int(QueueConstants.consentMaxAge / 86_400)) days")
+            db.delete(.consents, ids: [row.id])
+            consentTransportReported.remove(row.id)
+            return drainConsents(done: done)
+        }
+
         guard let body = JSONHandler.deserializeData(row.data) as? [String: Any] else {
             IntemptLogger.shared.log(.warning, "dropping undecodable consent record")
             db.delete(.consents, ids: [row.id])

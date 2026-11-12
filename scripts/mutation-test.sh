@@ -42,6 +42,7 @@ MUTANTS=(
 "Sources/Intempt/IntemptCredentials.swift|maxSplits: 1|maxSplits: 9|the API key splits on the FIRST dot only; a secret containing a dot must not be truncated into extra parts"
 "Sources/Intempt/RetryPolicy.swift|case .transport: return .keepForNextFlush|case .transport: return .drop(.dropped)|a batch that never reached the server must be KEPT for the next flush; dropping it loses every event recorded offline (INT-7436)"
 "Sources/Intempt/Flush.swift|if self.transportReported.insert(head).inserted {|if true {|a kept batch is reported once, not on every flush an offline device attempts (INT-7444)"
+"Sources/Intempt/Flush.swift|> QueueConstants.consentMaxAge|> QueueConstants.consentMaxAge * 1000|a consent kept while offline must be dropped after 30 days, or it parks the queue head forever"
 "Sources/Intempt/Push.swift|count >= 32|count >= 1|a stringified token (\"32 bytes\") must be rejected; accepting it registers a device that can never be reached"
 "Sources/Intempt/Constants.swift|[429, 503]|[503]|429 earns the one resend; treating a rate limit as final drops events the server asked to have resent (INT-7436)"
 "Sources/Intempt/IntemptDB.swift|ORDER BY time ASC|ORDER BY time DESC|eviction must drop the OLDEST rows; dropping newest throws away what just happened and keeps stale data"
