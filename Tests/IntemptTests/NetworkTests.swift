@@ -69,8 +69,10 @@ final class NetworkTests: XCTestCase {
         }
     }
 
+    /// The shared classification push webhooks and personalization read (R6). Event and consent
+    /// delivery narrow it to `APIConstants.deliveryResendStatuses`; see `RetryPolicyTests`.
     func testRetryableStatuses() {
-        for status in [408, 429] {
+        for status in [408, 429, 500, 502, 503, 504] {
             XCTAssertEqual(
                 Network.classify(data: nil, response: response(status), error: nil),
                 .retryable(status: status, retryAfter: nil))
@@ -79,7 +81,7 @@ final class NetworkTests: XCTestCase {
 
     /// Retrying a bad credential or a capped account can never succeed.
     func testTerminalStatuses() {
-        for status in [400, 401, 402, 403, 404, 422] {
+        for status in [400, 401, 402, 403, 404, 413, 422] {
             XCTAssertEqual(
                 Network.classify(data: nil, response: response(status), error: nil),
                 .terminal(status: status, body: nil),
@@ -91,6 +93,52 @@ final class NetworkTests: XCTestCase {
         let err = NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
         let outcome = Network.classify(data: nil, response: nil, error: err)
         if case .transport = outcome {} else { XCTFail("expected transport failure, got \(outcome)") }
+    }
+
+    /// A timeout is not "never reached": the request may have been received, so
+    /// it must not be kept and resent (INT-7436, CONTRACT S1.4).
+    func testTimeoutIsUnansweredNotTransport() {
+        let err = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+        let outcome = Network.classify(data: nil, response: nil, error: err)
+        if case .unanswered = outcome {} else { XCTFail("expected unanswered, got \(outcome)") }
+    }
+
+    /// R5: every error raised before the request could leave the device keeps the batch. A TLS
+    /// failure is a handshake failure, so no request byte was sent. Missing one of these drops a
+    /// batch the server never saw.
+    func testEveryPreRequestErrorCountsAsNeverReached() {
+        let neverReached = [
+            NSURLErrorNotConnectedToInternet, NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed,
+            NSURLErrorCannotConnectToHost, NSURLErrorInternationalRoamingOff, NSURLErrorCallIsActive,
+            NSURLErrorDataNotAllowed, NSURLErrorSecureConnectionFailed,
+            NSURLErrorServerCertificateHasBadDate, NSURLErrorServerCertificateUntrusted,
+            NSURLErrorServerCertificateHasUnknownRoot, NSURLErrorServerCertificateNotYetValid,
+            NSURLErrorClientCertificateRejected, NSURLErrorClientCertificateRequired,
+            NSURLErrorAppTransportSecurityRequiresSecureConnection, NSURLErrorBadURL,
+            NSURLErrorUnsupportedURL, NSURLErrorCannotLoadFromNetwork,
+        ]
+        for code in neverReached {
+            let error = NSError(domain: NSURLErrorDomain, code: code)
+            XCTAssertTrue(Network.neverReachedServer(error), "\(code)")
+            let outcome = Network.classify(data: nil, response: nil, error: error)
+            if case .transport = outcome {} else { XCTFail("\(code) must classify as transport, got \(outcome)") }
+        }
+    }
+
+    /// R5: these may fire after the request was written, so the server may hold the batch. They
+    /// are dropped, never kept and resent. docs/CONTRACT.md "Never reached versus maybe reached".
+    func testErrorsAfterTheWriteCountAsMaybeReached() {
+        let maybeReached = [
+            NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost, NSURLErrorCancelled,
+            NSURLErrorBadServerResponse, NSURLErrorCannotParseResponse, NSURLErrorCannotDecodeRawData,
+            NSURLErrorCannotDecodeContentData, NSURLErrorZeroByteResource, NSURLErrorHTTPTooManyRedirects,
+            NSURLErrorRedirectToNonExistentLocation, NSURLErrorResourceUnavailable,
+            NSURLErrorUserCancelledAuthentication, NSURLErrorUserAuthenticationRequired,
+            NSURLErrorRequestBodyStreamExhausted, NSURLErrorUnknown,
+        ]
+        for code in maybeReached {
+            XCTAssertFalse(Network.neverReachedServer(NSError(domain: NSURLErrorDomain, code: code)), "\(code)")
+        }
     }
 
     func testMissingHTTPResponseIsTransportFailure() {

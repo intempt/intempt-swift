@@ -167,10 +167,11 @@ Every key at once:
 intempt.allFlags { values in … }   // [String: JSONValue]
 ```
 
-One request instead of N, and that is the cost as well as the point: the service
-records a display for every experience it returns, so on a project using the
-`ONCE` display mode this consumes the once-only display for keys your app never
-renders. Prefer the per-key call where that matters.
+One request instead of N, and it evaluates only: it asks the service not to
+record an exposure or spend a `ONCE` display (INT-7456). Read the value you
+render with `variation(key:)`, which records it. Pass `disableExposure: true` to
+a single-key read made ahead of rendering. A service that predates the
+`exposure` field ignores it and records as before.
 
 ```swift
 intempt.waitForInitialization { … }   // calls back immediately
@@ -180,11 +181,18 @@ Present so a call site ported from an SDK that polls a local flag store compiles
 unchanged. Evaluation here is remote — every `variation` is a request — so there
 is no local state to wait for and `timeoutMs` is accepted and ignored.
 
-**No local evaluation, and no `variationDetail`.** The server buckets, so no
-second implementation can disagree with it. `variationDetail` would carry a
-`reason` the serving response does not send yet, so it would report `off` for
-someone who was in fact targeted and served — a wrong answer, not a missing one.
-It becomes public in the same release that adds `reason` to the wire.
+```swift
+intempt.variationDetail(key: "checkout-redesign", defaultValue: .bool(false)) { detail in … }
+intempt.onFlagError = { error in … }   // FlagError { key, kind, status }
+```
+
+`variationDetail` returns `FlagDetail { value, reason, error }` (INT-7454). A failed
+request reads `.error` with a `FlagError`, an answered miss reads `.off`, and a
+served value reads `.unanswered`, because the serving response sends no reason
+yet. It never guesses one. `onFlagError` is called for every failed flag request.
+
+**No local evaluation.** The server buckets, so no second implementation can
+disagree with it.
 
 Assignment is derived from `profileId` by default, because that identifier is
 present before and after someone signs in — deriving on `userId` re-buckets them
@@ -235,7 +243,19 @@ privacy manifest declares it, so set this to `false` before release if you don't
 intempt.flush()                   // fire and forget
 intempt.flush { sent in ... }      // completion carries the count
 intempt.flushInterval = 30         // seconds; 0 disables the timer
+intempt.onDeliveryFailure = { failure in … }   // DeliveryFailure
 ```
+
+`track` and the other recording calls return only whether the event was queued;
+they never throw for a delivery problem. Each batch, and each consent, is sent
+once. A 503 or 429 gets one resend after `Retry-After` (clamped to 1–60 s). Any
+other answer drops it, and so does a request that may have reached the server
+but was never answered (a timeout). Only a request that never reached the server
+(offline, DNS, refused, TLS handshake) is kept for the next flush.
+`onDeliveryFailure` hears every drop, and every kept batch once, as
+`DeliveryFailure { kind: transport | terminal | dropped, status, eventCount,
+eventIds, retryAfter, terminal }`. Push webhooks and feed reads keep their own
+status classification. See [docs/CONTRACT.md](docs/CONTRACT.md#failure-policy).
 
 ### Autocapture (iOS, tvOS)
 

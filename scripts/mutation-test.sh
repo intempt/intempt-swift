@@ -40,12 +40,15 @@ declare -a SURVIVORS
 # file | search | replace | invariant it breaks
 MUTANTS=(
 "Sources/Intempt/IntemptCredentials.swift|maxSplits: 1|maxSplits: 9|the API key splits on the FIRST dot only; a secret containing a dot must not be truncated into extra parts"
-"Sources/Intempt/Flush.swift|maxConsentStrikes = 3|maxConsentStrikes = 300|a consent the server keeps rejecting must be dropped after a bounded number of attempts, not retried forever"
-"Sources/Intempt/Flush.swift|self.dropRejectedBatch(outcome, ids: goodIds)|self.db.setFlag(.events, ids: goodIds, to: false)|a rejected batch is dropped on the first answer (R-retry, android parity); keeping it blocks every event behind it"
-"Sources/Intempt/RetryPolicy.swift|status == 404|status == -404|404 is retryable (android HttpStatusPolicy); dropping it deletes every batch while a route flaps during a deploy"
-"Sources/Intempt/Flush.swift|> QueueConstants.consentMaxAge|> QueueConstants.consentMaxAge * 1000|a consent kept by retryable answers must be dropped after 30 days, or it parks the queue head forever"
+"Sources/Intempt/RetryPolicy.swift|case .transport: return .keepForNextFlush|case .transport: return .drop(.dropped)|a batch that never reached the server must be KEPT for the next flush; dropping it loses every event recorded offline (INT-7436)"
+"Sources/Intempt/Flush.swift|if self.transportReported.insert(head).inserted {|if true {|a kept batch is reported once, not on every flush an offline device attempts (INT-7444)"
+"Sources/Intempt/Flush.swift|> QueueConstants.consentMaxAge|> QueueConstants.consentMaxAge * 1000|a consent kept while offline must be dropped after 30 days, or it parks the queue head forever"
 "Sources/Intempt/Push.swift|count >= 32|count >= 1|a stringified token (\"32 bytes\") must be rejected; accepting it registers a device that can never be reached"
-"Sources/Intempt/Constants.swift|[408, 429, 500, 502, 503, 504]|[408, 500, 502, 503, 504]|429 must be retryable; treating a rate limit as terminal discards the events"
+"Sources/Intempt/Constants.swift|deliveryResendStatuses: Set<Int> = [429, 503]|deliveryResendStatuses: Set<Int> = [503]|429 earns the one resend; treating a rate limit as final drops events the server asked to have resent (INT-7436)"
+"Sources/Intempt/RetryPolicy.swift|APIConstants.deliveryResendStatuses.contains(status)|APIConstants.retryableStatuses.contains(status)|event and consent delivery resend only 429/503; a resent 500 may duplicate a batch the server already processed (INT-7436, R6)"
+"Sources/Intempt/Constants.swift|[408, 429, 500, 502, 503, 504]|[429, 503]|push webhooks and feeds keep their pre-send-once retry set; narrowing the shared set silently stops push retries on a 500 (R6)"
+"Sources/Intempt/Network.swift|NSURLErrorServerCertificateUntrusted,|NSURLErrorTimedOut,|a TLS handshake failure never reached the server; dropping it loses a batch the server never saw (R5)"
+"Sources/Intempt/Flush.swift|reportConsentDropped(\"undecodable\")|_ = 0|a consent dropped before any request must still reach onDeliveryFailure; a silent consent loss is a compliance failure (R2)"
 "Sources/Intempt/IntemptDB.swift|ORDER BY time ASC|ORDER BY time DESC|eviction must drop the OLDEST rows; dropping newest throws away what just happened and keeps stale data"
 "Sources/Intempt/EventNames.swift|isValueChange ? editField : action|isValueChange ? action : editField|a control value change is Edit Field and a press is Action; swapping them mislabels every interaction"
 "Sources/Intempt/IdentityManager.swift|>= Self.sessionTimeout|> Self.sessionTimeout * 1000|the idle window is what ends a session; widening it means sessions never roll"
@@ -64,7 +67,9 @@ MUTANTS=(
 "Sources/Intempt/Flags.swift|if let names { body[\"names\"] = names }|body[\"names\"] = names ?? [String]()|allFlags OMITS names; sending an empty array filters the serving query to nothing and reads as \"no flags exist\""
 "Sources/Intempt/Flags.swift|if let sessionId, !sessionId.isEmpty { body[\"sessionId\"] = sessionId }|body[\"sessionId\"] = sessionId ?? \"\"|sessionId must be sent and must not be blank; ChooserHelper then stores \"default\" and ONCE_PER_VISIT degrades to once-ever-per-profile"
 "Sources/Intempt/Flags.swift|?? .unanswered))|?? .off))|an unanswered evaluation must not read as a deliberate off state (EXP-SERVE-001); off there is a wrong answer, not a missing one"
+"Sources/Intempt/Flags.swift|return completion(FlagEvaluation(value: nil, reason: .error, error: error))|return completion(FlagEvaluation(value: nil, reason: .off))|a failed flag request must read .error with its FlagError, never as a deliberate off state (INT-7454)"
 "Sources/Intempt/Flags.swift|!key.isEmpty && key.unicodeScalars.allSatisfy(allowedKeyCharacters.contains)|!key.isEmpty|a key the server's ^[a-zA-Z0-9_-]*$ pattern rejects must not be sent; requestToMono refuses the whole body, and the caller cannot tell that refusal from \"no flag configured\""
+"Sources/Intempt/Flags.swift|if !exposure { body[\"exposure\"] = false }|if false { body[\"exposure\"] = false }|allFlags must evaluate WITHOUT recording; otherwise one bulk read spends every ONCE display and counts exposures the app never rendered (INT-7456)"
 "Sources/Intempt/Personalization.swift|return \"mobile\"|return \"tv\"|deviceClass must stay inside ExperienceDevice (all/desktop/mobile); \"tv\" is what this SDK actually sent from tvOS, and an unmappable value fails to bind the WHOLE request so every flag read silently returns the default"
 )
 

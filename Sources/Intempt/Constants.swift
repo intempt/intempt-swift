@@ -31,14 +31,20 @@ enum APIConstants {
     /// Seconds between timer-driven flushes.
     static let flushInterval: TimeInterval = 60
 
-    // Retained from upstream — production-proven backoff shape.
-    static let minRetryBackoff: TimeInterval = 60
-    static let maxRetryBackoff: TimeInterval = 600
-    static let failuresTillBackoff = 2
-
-    /// Statuses worth retrying. Everything else non-2xx is terminal —
-    /// the old Obj-C SDK treated all of them as success and deleted the batch.
+    /// Statuses worth retrying, for push webhooks and personalization. Everything else non-2xx is
+    /// terminal — the old Obj-C SDK treated all of them as success and deleted the batch.
     static let retryableStatuses: Set<Int> = [408, 429, 500, 502, 503, 504]
+
+    /// Event and consent delivery narrow `retryableStatuses` to these, with one resend
+    /// (INT-7436, round-2 CONTRACT S1). Every other answer is final there: a 500 or a 408 may
+    /// already have been processed, so resending risks a duplicate. Kept separate from the shared
+    /// set by ruling R6 (Beso, 2026-11-13): send-once must not change push or feeds.
+    static let deliveryResendStatuses: Set<Int> = [429, 503]
+
+    /// Bounds, in seconds, on the wait before that one resend. `Retry-After` is clamped into
+    /// them; without the header the wait is the floor.
+    static let minResendDelay: TimeInterval = 1
+    static let maxResendDelay: TimeInterval = 60
 }
 
 enum QueueConstants {
@@ -46,7 +52,7 @@ enum QueueConstants {
     /// evicted, so an offline device cannot fill the user's disk.
     static let maxQueueSize = 5000
 
-    /// A consent kept by a retryable answer (403, 404, 5xx, offline) is
+    /// A consent kept because it never reached the server (offline) is
     /// dropped once older than this, or it parks the queue head forever.
     /// Android's `CONSENT_MAX_AGE_DAYS`.
     static let consentMaxAge: TimeInterval = 30 * 24 * 60 * 60

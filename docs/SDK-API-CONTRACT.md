@@ -327,6 +327,13 @@ records the gap at §8 item 37 under `EXP-SERVE-001`. Once a caller can tell "no
 from "no answer", the objection no longer holds and the capability belongs in the SDKs — a
 feature flag that only one platform can read is not a feature flag.
 
+**Superseded by INT-7454 (Beso, 2026-11-11, round-2 CONTRACT S3):** `variationDetail` is now
+public in every SDK. It does not guess a reason: a failed request reads `error` with a
+`FlagError {key, kind: auth | bad_request | server | timeout | network | parse, status}`, an
+answered request that served nothing reads `off`, and Swift reads a served value without a wire
+reason as `unanswered`. `onFlagError` reports every failure. The text below is the earlier
+reasoning, kept for the record.
+
 Until then, `variation()` ships and `variationDetail()` does not. That split is what makes
 the surface honest while the contract is pending: `variation` returns a VALUE, which is
 correct whether or not a reason exists, and the caller's required `defaultValue` covers the
@@ -336,18 +343,30 @@ method withheld is the one whose entire job is to give one.
 #### The surface
 
 ```
-variation(key, context, defaultValue)         -> T
-allFlags(context)                             -> Map<key, value>
+variation(key, context, defaultValue, disableExposure = false)         -> T
+allFlags(context)                                                      -> Map<key, value>
 
-variationDetail(key, context, defaultValue)   -> WITHHELD, see rule 3
+variationDetail(key, context, defaultValue, disableExposure = false)   -> FlagDetail {value, reason, error?}   (INT-7454)
 
-boolVariation   (key, context, defaultValue: Bool)
-stringVariation (key, context, defaultValue: String)
-numberVariation (key, context, defaultValue: Number)
-jsonVariation   (key, context, defaultValue: Object)
+boolVariation   (key, context, defaultValue: Bool,   disableExposure = false)
+stringVariation (key, context, defaultValue: String, disableExposure = false)
+numberVariation (key, context, defaultValue: Number, disableExposure = false)
+jsonVariation   (key, context, defaultValue: Object, disableExposure = false)
 
 waitForInitialization(timeout)
+
+onFlagError: (FlagError) -> Void                                       (INT-7454)
 ```
+
+Public in every SDK (ruling R1, Beso 2026-11-13): `variationDetail`, `FlagDetail`, `FlagReason`,
+`disableExposure` and `onFlagError`.
+
+`disableExposure` (INT-7456) evaluates a single key without recording an exposure or spending a
+`ONCE` display; it sends `"exposure": false` on choose-api. It defaults to `false`, so a read
+records its exposure as before. Use it for a value read ahead of rendering, then read the value
+you render without it. `allFlags` takes no flag: it always sends `exposure: false`, because a bulk
+read must not record exposures for keys the app never renders. A service that predates the field
+ignores it and records as before.
 
 Four rules, each of which is a correction to the shape being replaced:
 
@@ -359,7 +378,8 @@ Four rules, each of which is a correction to the shape being replaced:
 2. **`defaultValue` is required, not optional.** It is what the call returns on a network
    failure, a timeout, an unknown key, or a malformed response. Optional is how `undefined`
    reaches production during an outage.
-3. **`variationDetail` is WITHHELD until the platform sends a reason.** It was specified
+3. **Superseded by INT-7454 and ruling R1: `variationDetail` is public.** The rule as first
+   written follows, kept for the record. **`variationDetail` is WITHHELD until the platform sends a reason.** It was specified
    here as the half answering the 2026-08-15 objection, and the objection stands — but the
    evaluation response does not carry a reason today. A held-back person's experience is
    absent from it entirely rather than present with a cause, so every reason the method
@@ -428,6 +448,8 @@ exists to prevent. Verify per repository, against its default branch, on the dat
 | `intemptjs` | the only platform with assignment today | out of contract scope, tracked separately |
 
 #### Gate
+
+The `variationDetail` half of this gate is lifted by INT-7454; see the note above the surface.
 
 **No SDK PUBLISHES `variationDetail()` before the serving contract lands, and no SDK
 publishes `variation()` without a required `defaultValue`.** A published method name cannot
@@ -516,15 +538,17 @@ One error type across platforms, with these cases:
 | `missingIdentity` | required identifier absent for the event type |
 | `encodingFailed` | payload would not serialize |
 | `terminal(status)` | will never succeed on retry |
-| `retryable(status, retryAfter?)` | retry with backoff |
+| `retryable(status, retryAfter?)` | 408, 429, 500, 502, 503 or 504 on push and feeds; delivery resends only 503/429, once |
 | `transport(description)` | network layer failed |
 | `storageUnavailable(reason)` | queue could not persist |
 | `server(status, messages)` | server rejected with detail |
 
-The terminal/retryable split is contractual. `401` is terminal, and the event queue drops
-the batch on the first 401, as intempt-android does (ruling R-retry, D9, INT-7438). The
-delivery path retries 403, 404, 408, 429, every 5xx and network failures; anything else at
-300 or above is dropped.
+The terminal/retryable split is contractual. Since INT-7436 (round-2 CONTRACT S1) an event batch
+or a consent is sent once; 503 and 429 get one resend; every other answer, `401` included, drops it
+and reports it once through `onDeliveryFailure` (INT-7444), so the loss is never silent. Only a
+request that never reached the server is kept for the next flush. Push webhooks and
+personalization keep the wider retryable set above (ruling R6). docs/CONTRACT.md "Failure policy"
+has the table and the never-reached and maybe-reached error codes.
 
 ## Bridging rules for React Native
 

@@ -10,8 +10,8 @@ final class FlagsTests: XCTestCase {
 
     // MARK: reason vocabulary
     //
-    // NOT because it is published — `FlagReason` has no `public` modifier and is on no shipped
-    // surface. It is asserted because these strings are the WIRE vocabulary shared with
+    // Public since INT-7454, but that is not why. It is asserted because these strings are the
+    // WIRE vocabulary shared with
     // intempt-java (`TARGETED("targeted")`, `HOLDOUT("holdout")`, `NOT_TARGETED("not_targeted")`),
     // and a raw value edited to match the Swift case name would silently stop matching the server.
 
@@ -45,9 +45,13 @@ final class FlagsTests: XCTestCase {
     // What each was reaching for is asserted for real below, against the evaluation path:
     // `testAnUnknownReasonResolvesToUnanswered` and
     // `testTheDefaultContextDerivesOnProfileIdNotUserId`.
-    //
-    // FlagDetail stays internal: it carries a reason the platform does not send, so
-    // variationDetail is not exposed until the serving contract carries one.
+
+    func testErrorIsItsOwnReason() {
+        // INT-7454: a failed request must not read as a deliberate off state either.
+        XCTAssertEqual(FlagReason.error.rawValue, "error")
+        XCTAssertNotEqual(FlagReason.error, FlagReason.off)
+        XCTAssertEqual(FlagError.Kind.badRequest.rawValue, "bad_request")
+    }
 
     // MARK: key charset
     //
@@ -83,8 +87,9 @@ final class FlagsTests: XCTestCase {
 // The four tests above cover the FlagReason enum and FlagContext — types, not behaviour.
 // Nothing exercised the evaluation path itself, so the failure modes every other SDK in
 // this effort tests were untested here: an unreachable service, a non-2xx, a malformed
-// body, an unknown key, a blank key. Each must yield nil, which is what tells the caller
-// to use its defaultValue rather than throw into a render.
+// body, an unknown key, a blank key. Each yields no value, which is what tells the caller
+// to use its defaultValue rather than throw into a render, and since INT-7454 a reason
+// that says which of them happened.
 //
 // These target `Flags.detail` rather than `IntemptInstance.variation` because
 // IntemptInstance's init is private and cannot be built with a stubbed Network. That
@@ -97,6 +102,8 @@ final class FlagsTests: XCTestCase {
 
 final class FlagsDetailTests: XCTestCase {
 
+    private let hookCalls = HookCalls()
+
     private func flags(_ replies: [MockSession.Reply]) -> (Flags, MockSession) {
         let session = MockSession(replies: replies, fallback: .status(500))
         let network = Network(session: session, host: "example.invalid")
@@ -104,6 +111,8 @@ final class FlagsDetailTests: XCTestCase {
             network: network,
             credentials: try! IntemptCredentials(apiKey: "examplePrefix123.exampleSecretValue"),
             orgId: "o", projectId: "p", sourceId: "s")
+        let hookCalls = self.hookCalls
+        f.onFlagError = { hookCalls.append($0) }
         return (f, session)
     }
 
@@ -112,9 +121,9 @@ final class FlagsDetailTests: XCTestCase {
         _ key: String,
         context: FlagContext = FlagContext(userId: "u-1"),
         sessionId: String? = "s-1"
-    ) -> FlagDetail? {
+    ) -> FlagEvaluation? {
         let done = expectation(description: "detail")
-        var out: FlagDetail?
+        var out: FlagEvaluation?
         f.detail(key: key, context: context, sessionId: sessionId) {
             out = $0
             done.fulfill()
@@ -154,24 +163,87 @@ final class FlagsDetailTests: XCTestCase {
         XCTAssertNil(detail(f, "k")?.value)
     }
 
-    func testAnUnknownKeyYieldsNil() {
+    /// The service answered and served nothing for the key: a real `off`, not an error
+    /// (CONTRACT S3 keeps `off` here so INT-7457 stays honest).
+    func testAnUnknownKeyYieldsNoValueAndOff() {
         let (f, _) = flags([.json(200, #"{"choices":[]}"#)])
-        XCTAssertNil(detail(f, "never_created"))
+        let result = detail(f, "never_created")
+        XCTAssertNil(result?.value)
+        XCTAssertEqual(result?.reason, .off)
+        XCTAssertNil(result?.error)
+        XCTAssertTrue(hookCalls.errors.isEmpty, "an answered request is not a failure")
     }
 
-    func testANon2xxYieldsNil() {
+    func testANon2xxYieldsNoValueAndAServerError() {
         let (f, _) = flags([.status(500)])
-        XCTAssertNil(detail(f, "k"))
+        let result = detail(f, "k")
+        XCTAssertNil(result?.value)
+        XCTAssertEqual(result?.reason, .error)
+        XCTAssertEqual(result?.error, FlagError(key: "k", kind: .server, status: 500))
+        XCTAssertEqual(hookCalls.errors, [FlagError(key: "k", kind: .server, status: 500)])
     }
 
-    func testAnUnreachableServiceYieldsNil() {
+    func testAnUnreachableServiceYieldsANetworkError() {
         let (f, _) = flags([.offline()])
-        XCTAssertNil(detail(f, "k"))
+        let result = detail(f, "k")
+        XCTAssertNil(result?.value)
+        XCTAssertEqual(result?.error, FlagError(key: "k", kind: .network, status: nil))
     }
 
-    func testAMalformedBodyYieldsNil() {
+    func testAMalformedBodyYieldsAParseError() {
         let (f, _) = flags([.json(200, "not json at all")])
-        XCTAssertNil(detail(f, "k"))
+        let result = detail(f, "k")
+        XCTAssertNil(result?.value)
+        XCTAssertEqual(result?.error, FlagError(key: "k", kind: .parse, status: nil))
+    }
+
+    /// INT-7454: a wrong key used to read exactly like "flag not configured", with no log. The
+    /// hook fires on every failure, and the error-level log names the key prefix, once.
+    func testARejectedKeyFiresTheHookEveryTimeAndLogsAnErrorOnce() {
+        let sink = CollectingLogger()
+        IntemptLogger.shared.addLogging(sink)
+        IntemptLogger.shared.enable(.error)
+        defer {
+            IntemptLogger.shared.removeAllLogging()
+            IntemptLogger.shared.disableAllLevels()
+        }
+        let (f, _) = flags([.status(401), .status(403)])
+
+        XCTAssertEqual(detail(f, "k")?.error, FlagError(key: "k", kind: .auth, status: 401))
+        XCTAssertEqual(detail(f, "k")?.error, FlagError(key: "k", kind: .auth, status: 403))
+
+        XCTAssertEqual(hookCalls.errors.map(\.kind), [.auth, .auth])
+        let errorLines = sink.messages.filter { $0.contains("examplePrefix123") }
+        XCTAssertEqual(errorLines.count, 1, "error level once per instance, debug after: \(sink.messages)")
+        XCTAssertFalse(errorLines.joined().contains("exampleSecretValue"), "never the secret")
+    }
+
+    func testStatusesMapToTheirKinds() {
+        let cases: [(MockSession.Reply, FlagError.Kind, Int?)] = [
+            (.status(400), .badRequest, 400), (.status(404), .badRequest, 404),
+            (.status(408), .timeout, 408), (.status(429), .badRequest, 429),
+            (.status(502), .server, 502), (.status(503), .server, 503),
+            (.timedOut(), .timeout, nil),
+        ]
+        for (reply, kind, status) in cases {
+            let (f, _) = flags([reply])
+            XCTAssertEqual(detail(f, "k")?.error, FlagError(key: "k", kind: kind, status: status), "\(reply)")
+        }
+    }
+
+    /// Skipped the round trip, as before, but no longer silently.
+    func testAKeyTheServiceWouldRejectIsReportedWithoutARequest() {
+        let (f, session) = flags([])
+        let result = detail(f, "checkout.new")
+        XCTAssertEqual(result?.reason, .error)
+        XCTAssertEqual(result?.error, FlagError(key: "checkout.new", kind: .badRequest, status: nil))
+        XCTAssertEqual(session.requestCount, 0)
+    }
+
+    func testAllFlagsReportsAFailureWithNoKey() {
+        let (f, _) = flags([.status(500)])
+        XCTAssertTrue(all(f).isEmpty)
+        XCTAssertEqual(hookCalls.errors, [FlagError(key: nil, kind: .server, status: 500)])
     }
 
     func testAnUnknownReasonResolvesToUnanswered() {
@@ -239,5 +311,118 @@ final class FlagsDetailTests: XCTestCase {
         XCTAssertEqual(values["served"], .bool(true))
         XCTAssertNil(values["empty"])
         XCTAssertEqual(values.count, 1)
+    }
+}
+
+/// The public surface: `variationDetail` substitutes the default and keeps the reason, and the
+/// instance hook reaches `Flags` (INT-7454).
+final class VariationDetailTests: IntemptTestCase {
+
+    private func instance(_ replies: [MockSession.Reply]) throws -> IntemptInstance {
+        try IntemptInstance.makeForTesting(
+            store: defaults, databaseDirectory: tempDir,
+            network: Network(session: MockSession(replies: replies, fallback: .status(500))))
+    }
+
+    private func detail(_ sdk: IntemptInstance, _ key: String = "k") -> FlagDetail? {
+        let done = expectation(description: "variationDetail")
+        var out: FlagDetail?
+        sdk.variationDetail(key: key, defaultValue: .string("fallback")) {
+            out = $0
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 2)
+        return out
+    }
+
+    func testAFailureReturnsTheDefaultWithTheError() throws {
+        let sdk = try instance([.status(401)])
+        let calls = HookCalls()
+        sdk.onFlagError = { calls.append($0) }
+
+        let result = detail(sdk)
+        XCTAssertEqual(result?.value, .string("fallback"))
+        XCTAssertEqual(result?.reason, .error)
+        XCTAssertEqual(result?.error, FlagError(key: "k", kind: .auth, status: 401))
+        XCTAssertEqual(calls.errors, [FlagError(key: "k", kind: .auth, status: 401)])
+    }
+
+    func testAnAnsweredMissReturnsTheDefaultAndOff() throws {
+        let result = detail(try instance([.json(200, #"{"choices":[]}"#)]))
+        XCTAssertEqual(result?.value, .string("fallback"))
+        XCTAssertEqual(result?.reason, .off)
+        XCTAssertNil(result?.error)
+    }
+
+    func testAServedValueIsReturnedWithoutAGuessedReason() throws {
+        let result = detail(try instance([.json(200, #"{"choices":[{"name":"k","body":"B"}]}"#)]))
+        XCTAssertEqual(result?.value, .string("B"))
+        XCTAssertEqual(result?.reason, .unanswered, "the serving response sends no reason")
+    }
+
+    func testVariationStillReturnsTheDefaultOnFailure() throws {
+        let sdk = try instance([.status(500)])
+        let done = expectation(description: "variation")
+        sdk.variation(key: "k", defaultValue: .bool(false)) {
+            XCTAssertEqual($0, .bool(false))
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 2)
+    }
+}
+
+/// Written from the network callback's thread, read from the test thread.
+final class HookCalls {
+    private let lock = NSLock()
+    private var _errors: [FlagError] = []
+
+    var errors: [FlagError] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _errors
+    }
+
+    func append(_ error: FlagError) {
+        lock.lock()
+        _errors.append(error)
+        lock.unlock()
+    }
+}
+
+/// INT-7456 (round-2 CONTRACT S4): evaluation is separated from exposure.
+extension FlagsDetailTests {
+
+    private func rawBody(_ session: MockSession) -> String {
+        session.requests.first?.httpBody.map { String(decoding: $0, as: UTF8.self) } ?? ""
+    }
+
+    func testAllFlagsAsksTheServiceNotToRecordAnExposure() {
+        let (f, session) = flags([.json(200, #"{"choices":[]}"#)])
+        _ = all(f)
+        // The raw bytes, not the decoded value: a decoded 0 also reads as `false` through `as? Bool`.
+        XCTAssertTrue(rawBody(session).contains(#""exposure":false"#), rawBody(session))
+    }
+
+    func testASingleFlagReadRecordsTheExposureByOmittingTheField() {
+        // Absent is the service's "record" default, and what every SDK before this one sent.
+        let (f, session) = flags([.json(200, #"{"choices":[]}"#)])
+        _ = detail(f, "k")
+        XCTAssertNil(session.bodies.first?["exposure"])
+    }
+}
+
+extension VariationDetailTests {
+
+    func testDisableExposureEvaluatesWithoutRecording() throws {
+        let session = MockSession(replies: [.json(200, #"{"choices":[]}"#)], fallback: .status(500))
+        let sdk = try IntemptInstance.makeForTesting(
+            store: defaults, databaseDirectory: tempDir, network: Network(session: session))
+        let done = expectation(description: "boolVariation")
+        sdk.boolVariation(key: "k", defaultValue: false, disableExposure: true) { _ in done.fulfill() }
+        wait(for: [done], timeout: 2)
+
+        let raw = session.requests.first?.httpBody.map { String(decoding: $0, as: UTF8.self) } ?? ""
+        XCTAssertTrue(raw.contains(#""exposure":false"#), raw)
+        XCTAssertEqual(session.bodies.first?["names"] as? [String], ["k"])
     }
 }

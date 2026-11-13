@@ -86,4 +86,11 @@ final class EndpointTests: XCTestCase {
             XCTAssertFalse(APIConstants.retryableStatuses.contains(s), "\(s) must be terminal")
         }
     }
+
+    /// R6 (Beso, 2026-11-13): send-once narrows only event and consent delivery. The shared set
+    /// above still serves push webhooks and personalization unchanged.
+    func testDeliveryResendsOnlyOn429And503() {
+        XCTAssertEqual(APIConstants.deliveryResendStatuses, [429, 503])
+        XCTAssertTrue(APIConstants.deliveryResendStatuses.isSubset(of: APIConstants.retryableStatuses))
+    }
 }

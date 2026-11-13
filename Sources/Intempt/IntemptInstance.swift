@@ -186,6 +186,7 @@ public final class IntemptInstance {
         // that started it, so a gate checked only at the entry point would let
         // a report leave after `optOut()` had already returned.
         self.pushWebhook.isPermitted = { [weak self] in self?.hasOptedOut() == false }
+        self.flusher.isPermitted = { [weak self] in self?.hasOptedOut() == false }
 
         // `automatic` needs to call back into `self`, so it is built after all
         // stored properties are initialised and captures self weakly.
@@ -451,6 +452,18 @@ public final class IntemptInstance {
         set { flusher.flushInterval = newValue }
     }
 
+    /// Called once for each batch that is not delivered, on its final outcome (INT-7444).
+    ///
+    /// `track` and the other recording calls return only whether the event was queued and never
+    /// fail for a delivery problem; this is where one surfaces. A `.transport` failure means the
+    /// batch never reached the server and is still queued; it is reported once, not on every
+    /// flush. Every other kind means the events are gone. Runs on the SDK's delivery queue, not
+    /// main, so hop to main before touching UI.
+    public var onDeliveryFailure: ((DeliveryFailure) -> Void)? {
+        get { flusher.onDeliveryFailure }
+        set { flusher.onDeliveryFailure = newValue }
+    }
+
     /// Sends everything queued now.
     /// - Parameter completion: number of events delivered.
     public func flush(completion: ((Int) -> Void)? = nil) {
@@ -491,43 +504,56 @@ public final class IntemptInstance {
     /// Ask for a KEY, never a mode. Whether the key names an experiment, a personalization or a
     /// flag is the platform's business: its serving query filters on channel and status and never
     /// on mode.
+    ///
+    /// - Parameter disableExposure: true evaluates without recording an exposure, for a value read
+    ///   ahead of rendering it (pre-render, prefetch). Leave it false where the value is shown:
+    ///   that read is what counts the person as exposed (INT-7456).
     public func variation(
         key: String,
         context: FlagContext? = nil,
         defaultValue: JSONValue,
+        disableExposure: Bool = false,
         completion: @escaping (JSONValue) -> Void
     ) {
-        variationDetailInternal(key: key, context: context, defaultValue: defaultValue) {
-            completion($0.value ?? defaultValue)
+        variationDetail(
+            key: key, context: context, defaultValue: defaultValue, disableExposure: disableExposure
+        ) {
+            completion($0.value)
         }
     }
 
-    /// Internal. NOT public, deliberately.
+    /// `variation` plus why (INT-7454, round-2 CONTRACT S3).
     ///
-    /// It returns a `reason`, and the platform does not send one: a held-back person's experience
-    /// is absent from the evaluation response entirely rather than present with a cause. So every
-    /// reason would read `off` — including for someone who WAS targeted and did receive the
-    /// variant. That is a wrong answer, not a missing one, and a method whose only job is
-    /// explaining why must not guess.
-    ///
-    /// `variation` uses it for the value, which is correct either way. It becomes public when the
-    /// serving contract carries a reason.
-    func variationDetailInternal(
+    /// `.error` carries the failure in `error`, and the value is `defaultValue`. `.off` means the
+    /// service answered and served nothing for this key. A served value reads `.unanswered` today:
+    /// the serving response sends no reason (a held-back person's experience is absent rather than
+    /// present with a cause), and this method does not guess one.
+    public func variationDetail(
         key: String,
         context: FlagContext? = nil,
         defaultValue: JSONValue,
+        disableExposure: Bool = false,
         completion: @escaping (FlagDetail) -> Void
     ) {
         let resolved = resolvedFlagContext(context)
-        flags.detail(key: key, context: resolved, sessionId: identity.sessionId) { detail in
-            guard let detail else {
-                return completion(FlagDetail(value: defaultValue, reason: .unanswered))
-            }
+        flags.detail(
+            key: key, context: resolved, sessionId: identity.sessionId, exposure: !disableExposure
+        ) { evaluation in
             completion(
                 FlagDetail(
-                    value: detail.value ?? defaultValue,
-                    reason: detail.reason))
+                    value: evaluation.value ?? defaultValue,
+                    reason: evaluation.reason,
+                    error: evaluation.error))
         }
+    }
+
+    /// Called for every failed flag request: `variation`, the typed variations, `variationDetail`
+    /// and `allFlags` (INT-7454). The caller still gets its default; this is where the failure
+    /// becomes visible. A 401/403 is also logged at error level once per instance. Runs on the
+    /// network callback's thread.
+    public var onFlagError: ((FlagError) -> Void)? {
+        get { flags.onFlagError }
+        set { flags.onFlagError = newValue }
     }
 
     /// The device identifier is filled in from the SDK's own identity when the caller does not
@@ -540,13 +566,12 @@ public final class IntemptInstance {
         return FlagContext(userId: context?.userId, profileId: supplied ?? identity.profileId)
     }
 
-    /// Every key assigned to this person, in one call.
+    /// Every key assigned to this person, in one call, without recording an exposure (INT-7456).
     ///
-    /// One call, not one per key — and that is the cost as well as the point. The service records
-    /// a display for every experience it retrieves, so on a project using the `ONCE` display mode
-    /// this consumes the once-only display for every qualifying experience, including ones this
-    /// app never renders. Those keys then read as "not enrolled" forever. Use `variation(key:)`
-    /// per key where that matters; see the note on `Flags.all`.
+    /// Evaluation is separated from exposure: this asks the service not to record a display, so
+    /// an experience the app never renders is not counted and a `ONCE` display is not spent. Read
+    /// a value you render with `variation(key:)`, which records it. See the note on `Flags.all`
+    /// for a service that predates the field.
     public func allFlags(
         context: FlagContext? = nil,
         completion: @escaping ([String: JSONValue]) -> Void
@@ -561,9 +586,12 @@ public final class IntemptInstance {
         key: String,
         context: FlagContext? = nil,
         defaultValue: Bool,
+        disableExposure: Bool = false,
         completion: @escaping (Bool) -> Void
     ) {
-        variation(key: key, context: context, defaultValue: .bool(defaultValue)) { value in
+        variation(
+            key: key, context: context, defaultValue: .bool(defaultValue), disableExposure: disableExposure
+        ) { value in
             // A served value of the wrong type is a misconfiguration, not something to coerce:
             // the string "false" is truthy in most languages, and a silent coercion is
             // indistinguishable from a correct answer.
@@ -575,9 +603,12 @@ public final class IntemptInstance {
         key: String,
         context: FlagContext? = nil,
         defaultValue: String,
+        disableExposure: Bool = false,
         completion: @escaping (String) -> Void
     ) {
-        variation(key: key, context: context, defaultValue: .string(defaultValue)) { value in
+        variation(
+            key: key, context: context, defaultValue: .string(defaultValue), disableExposure: disableExposure
+        ) { value in
             if case .string(let s) = value { completion(s) } else { completion(defaultValue) }
         }
     }
@@ -586,9 +617,12 @@ public final class IntemptInstance {
         key: String,
         context: FlagContext? = nil,
         defaultValue: Double,
+        disableExposure: Bool = false,
         completion: @escaping (Double) -> Void
     ) {
-        variation(key: key, context: context, defaultValue: .number(defaultValue)) { value in
+        variation(
+            key: key, context: context, defaultValue: .number(defaultValue), disableExposure: disableExposure
+        ) { value in
             if case .number(let n) = value { completion(n) } else { completion(defaultValue) }
         }
     }
@@ -597,9 +631,12 @@ public final class IntemptInstance {
         key: String,
         context: FlagContext? = nil,
         defaultValue: [String: JSONValue],
+        disableExposure: Bool = false,
         completion: @escaping ([String: JSONValue]) -> Void
     ) {
-        variation(key: key, context: context, defaultValue: .object(defaultValue)) { value in
+        variation(
+            key: key, context: context, defaultValue: .object(defaultValue), disableExposure: disableExposure
+        ) { value in
             if case .object(let o) = value { completion(o) } else { completion(defaultValue) }
         }
     }

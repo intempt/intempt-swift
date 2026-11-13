@@ -11,23 +11,49 @@ import Foundation
 ///    query filters on channel and status and never on mode.
 /// 2. `defaultValue` is REQUIRED. It is what a caller receives on a network failure, a timeout, an
 ///    unknown key or a malformed response.
-/// 3. `variationDetail` is NOT exposed. It would carry a `reason` the platform does not send, so
-///    it could not tell a deliberate off state
-///    from a request the service never answered — which is exactly why this SDK exposed no
-///    assignment at all until the serving contract could distinguish the two.
+/// 3. `variationDetail` is public (INT-7454, round-2 CONTRACT S3). A failed request now reads
+///    `.error` with a `FlagError`, so it is no longer confused with a deliberate off state. The
+///    platform still sends no `reason` for a served value: that reads `.unanswered`, not a guess.
 /// 4. Evaluation is REMOTE only. There is no local rule engine and no flag store to poll.
 
 /// Why an evaluation returned the value it did.
 ///
-/// `unanswered` is SDK-local and never arrives on the wire. It exists because `EXP-SERVE-001`
-/// requires a caller to tell a deliberate off state from a request the service did not answer,
-/// and aliasing the two onto `.off` is exactly the collapse that requirement forbids.
-enum FlagReason: String, Sendable, Equatable {
+/// `unanswered` and `error` are SDK-local and never arrive on the wire. `error`: the request
+/// failed, see `FlagDetail.error`. `off`: the service answered and served nothing for the key.
+/// `unanswered`: a value was served without a reason this SDK knows, which is every served value
+/// until the serving response carries one. Aliasing either onto `.off` is the collapse
+/// `EXP-SERVE-001` forbids.
+public enum FlagReason: String, Sendable, Equatable {
     case targeted
     case holdout
     case notTargeted = "not_targeted"
     case off
     case unanswered
+    case error
+}
+
+/// Why a flag request failed (INT-7454). The caller still receives its default value.
+public struct FlagError: Error, Sendable, Equatable {
+
+    public enum Kind: String, Sendable, Equatable {
+        /// 401 or 403: the API key or the source is wrong.
+        case auth
+        /// Any other 4xx, or a request the SDK refused to send (a key the service would reject).
+        case badRequest = "bad_request"
+        /// 5xx.
+        case server
+        /// 408, or a request sent and never answered.
+        case timeout
+        /// The request never reached the service.
+        case network
+        /// A 2xx whose body is not the evaluation response.
+        case parse
+    }
+
+    /// Nil for `allFlags`, which names no key.
+    public let key: String?
+    public let kind: Kind
+    public let status: Int?
 }
 
 /// Who is being evaluated.
@@ -45,14 +71,25 @@ public struct FlagContext: Sendable, Equatable {
     }
 }
 
-/// A value and why it was returned. INTERNAL — see the note on `variationDetailInternal`.
-struct FlagDetail: Sendable, Equatable {
+/// What `variationDetail` returns: the value the caller should use (their default when nothing
+/// was served), why, and the failure when `reason` is `.error`.
+public struct FlagDetail: Sendable, Equatable {
+    public let value: JSONValue
+    public let reason: FlagReason
+    public let error: FlagError?
+}
+
+/// One key's evaluation before the caller's default is applied. `value` is nil when nothing was
+/// served.
+struct FlagEvaluation: Sendable, Equatable {
     let value: JSONValue?
     let reason: FlagReason
+    let error: FlagError?
 
-    init(value: JSONValue?, reason: FlagReason) {
+    init(value: JSONValue?, reason: FlagReason, error: FlagError? = nil) {
         self.value = value
         self.reason = reason
+        self.error = error
     }
 }
 
@@ -67,6 +104,16 @@ final class Flags {
     private let orgId: String
     private let projectId: String
     private let sourceId: String
+
+    private let lock = ReadWriteLock(label: "com.intempt.flags")
+    private var _onFlagError: ((FlagError) -> Void)?
+    private var authFailureLogged = false
+
+    /// See `IntemptInstance.onFlagError`.
+    var onFlagError: ((FlagError) -> Void)? {
+        get { lock.read { _onFlagError } }
+        set { lock.write { _onFlagError = newValue } }
+    }
 
     init(
         network: Network,
@@ -105,11 +152,13 @@ final class Flags {
         !key.isEmpty && key.unicodeScalars.allSatisfy(allowedKeyCharacters.contains)
     }
 
+    /// - Parameter exposure: false evaluates without recording an exposure (INT-7456).
     func detail(
         key: String,
         context: FlagContext,
         sessionId: String?,
-        completion: @escaping (FlagDetail?) -> Void
+        exposure: Bool = true,
+        completion: @escaping (FlagEvaluation) -> Void
     ) {
         guard !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             // A programming error, not a runtime condition. `assertionFailure` is compiled out
@@ -118,7 +167,9 @@ final class Flags {
             // flag key is worse than the flag reading its default — and docs/CONVENTIONS.md says
             // so rather than promising a throw the code does not make.
             assertionFailure("variation: key must not be empty")
-            return completion(nil)
+            return completion(
+                FlagEvaluation(
+                    value: nil, reason: .error, error: failed(.badRequest, status: nil, key: key)))
         }
 
         guard Flags.isValidKey(key) else {
@@ -126,15 +177,22 @@ final class Flags {
             // above traps it in DEBUG; a dotted or spaced key is a realistic naming mistake, and
             // aborting someone's debug build over one is worse than the flag reading its default.
             // The service refuses it either way, so this skips a round trip that could only fail.
-            return completion(nil)
+            // Reported as the 400 it would have been, so the caller can tell it from "not set".
+            return completion(
+                FlagEvaluation(
+                    value: nil, reason: .error, error: failed(.badRequest, status: nil, key: key)))
         }
 
-        choose(context: context, sessionId: sessionId, names: [key]) { choices in
+        choose(context: context, sessionId: sessionId, names: [key], exposure: exposure) {
+            choices, error in
+            if let error {
+                return completion(FlagEvaluation(value: nil, reason: .error, error: error))
+            }
             guard let choice = choices.first(where: { Flags.string($0["name"]) == key }) else {
-                return completion(nil)
+                return completion(FlagEvaluation(value: nil, reason: .off))
             }
             completion(
-                FlagDetail(
+                FlagEvaluation(
                     value: Flags.servedValue(choice["body"]),
                     reason: FlagReason(rawValue: Flags.string(choice["reason"]) ?? "")
                         ?? .unanswered))
@@ -143,21 +201,18 @@ final class Flags {
 
     /// Every key this person qualifies for.
     ///
-    /// HAZARD, and it is a server-side one: `ExperienceChooserService.chooseApi` records a
-    /// display for EVERY experience it retrieves, before variant choice. For an experience
-    /// configured `ONCE`, a single `all()` therefore burns the once-only display for every
-    /// qualifying experience at once — including ones the app never renders — and a later
-    /// `detail(key:)` for such a key drops out of `choices` and resolves to the caller's
-    /// default, permanently and indistinguishably from "not enrolled". It also inflates the
-    /// exposure counts `EXP-SERVE-003` makes load-bearing for results. A non-recording read
-    /// mode is an audience-service change; until it exists, prefer `detail(key:)` per key on
-    /// any project that uses `ONCE`.
+    /// Evaluation only: sends `exposure: false` (INT-7456, round-2 CONTRACT S4), so the service
+    /// spends no `ONCE` display and records no exposure for experiences the app may never
+    /// render. Before that field, a single `all()` burned the once-only display for every
+    /// qualifying experience and inflated the exposure counts `EXP-SERVE-003` relies on. A
+    /// service that predates the field ignores it and still records; the exposure for a value
+    /// the app does use is recorded by the single-key read that renders it.
     func all(
         context: FlagContext,
         sessionId: String?,
         completion: @escaping ([String: JSONValue]) -> Void
     ) {
-        choose(context: context, sessionId: sessionId, names: nil) { choices in
+        choose(context: context, sessionId: sessionId, names: nil, exposure: false) { choices, _ in
             var out: [String: JSONValue] = [:]
             for choice in choices {
                 guard let name = Flags.string(choice["name"]), !name.isEmpty else { continue }
@@ -170,18 +225,21 @@ final class Flags {
         }
     }
 
-    /// A transport failure yields no choices rather than an error the caller must handle.
+    /// A failure yields no choices plus a `FlagError`, never a throw.
     ///
     /// This is the entire reason `defaultValue` is required: a network failure, a 5xx or a timeout
-    /// must resolve to the value the caller chose. A flag SDK that surfaces an error when the
-    /// service is unreachable pushes every call site into writing the same fallback by hand —
-    /// which is the opposite of what a kill switch is for.
+    /// must resolve to the value the caller chose. A flag SDK that throws when the service is
+    /// unreachable pushes every call site into writing the same fallback by hand — which is the
+    /// opposite of what a kill switch is for. The error goes to `onFlagError` and to
+    /// `variationDetail`, so the failure is visible without being in the way (INT-7454).
     private func choose(
         context: FlagContext,
         sessionId: String?,
         names: [String]?,
-        completion: @escaping ([[String: Any]]) -> Void
+        exposure: Bool,
+        completion: @escaping ([[String: Any]], FlagError?) -> Void
     ) {
+        let key = names?.first
         var identification: [String: Any] = ["sourceId": sourceId]
         if let userId = context.userId, !userId.isEmpty { identification["userId"] = userId }
         if let profileId = context.profileId, !profileId.isEmpty {
@@ -198,6 +256,8 @@ final class Flags {
         // `ExperienceChoose` with "default", which makes session-level analysis unattributable.
         if let sessionId, !sessionId.isEmpty { body["sessionId"] = sessionId }
         if let names { body["names"] = names }
+        // Absent means "record", the service's default, so a true is never sent.
+        if !exposure { body["exposure"] = false }
 
         let request: URLRequest
         do {
@@ -206,20 +266,60 @@ final class Flags {
                 credentials: credentials,
                 body: body)
         } catch {
-            return completion([])
+            return completion([], failed(.badRequest, status: nil, key: key))
         }
 
         network.send(request) { outcome in
+            guard case .success(let data) = outcome else {
+                let (kind, status) = Flags.errorKind(for: outcome)
+                return completion([], self.failed(kind, status: status, key: key))
+            }
             guard
-                case .success(let data) = outcome,
                 let data,
                 let json = JSONHandler.deserializeData(data) as? [String: Any],
                 let choices = json["choices"] as? [[String: Any]]
             else {
-                return completion([])
+                return completion([], self.failed(.parse, status: nil, key: key))
             }
-            completion(choices)
+            completion(choices, nil)
         }
+    }
+
+    static func errorKind(for outcome: HTTPOutcome) -> (FlagError.Kind, Int?) {
+        switch outcome {
+        case .retryable(let status, _), .terminal(let status, _):
+            switch status {
+            case 401, 403: return (.auth, status)
+            case 408: return (.timeout, status)
+            case 400..<500: return (.badRequest, status)
+            default: return (.server, status)
+            }
+        case .unanswered: return (.timeout, nil)
+        case .transport: return (.network, nil)
+        case .success: return (.parse, nil)
+        }
+    }
+
+    /// Logs, notifies `onFlagError`, and returns the error. A rejected key is logged at error
+    /// level once per instance (CONTRACT S3): every flag read on a bad key fails the same way,
+    /// and one line naming the key prefix and source is what an integrator needs.
+    private func failed(_ kind: FlagError.Kind, status: Int?, key: String?) -> FlagError {
+        let error = FlagError(key: key, kind: kind, status: status)
+        let what = "flag evaluation failed (\(kind.rawValue)\(status.map { " \($0)" } ?? "")); using the default"
+        if kind == .auth {
+            let first: Bool = lock.write {
+                defer { authFailureLogged = true }
+                return !authFailureLogged
+            }
+            IntemptLogger.shared.log(
+                first ? .error : .debug,
+                "\(what). The service rejected API key prefix \(credentials.prefix) for source "
+                    + "\(sourceId): check the key and that it belongs to this source.")
+        } else {
+            IntemptLogger.shared.log(.debug, what)
+        }
+        onFlagError?(error)
+        return error
     }
 
     /// A JSON null body is ABSENT, not a served value.

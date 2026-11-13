@@ -3,7 +3,51 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] — unreleased
+
+### Changed
+
+- **BREAKING: delivery sends each batch once; only 503 and 429 get one resend (INT-7436).** The
+  wait before that resend is `Retry-After` clamped to 1–60 s, 1 s when absent. Every other status
+  the server answers (400, 401–404, 408, 413, 422, 500, 502, 504, …) drops the batch on the first
+  answer, and so does a request that may have been received but was never answered (a timeout, a
+  connection lost after the write), since the server may already hold it. Only a request that
+  never reached the server (offline, DNS, connection refused, TLS handshake failure) is kept for
+  the next flush; docs/CONTRACT.md "Failure policy" lists the codes. The exponential backoff and
+  the 0.5.0 R-retry table (403/404/408/5xx kept and retried) are gone. Events that used to sit in
+  the queue on a bad key or a 5xx are now dropped and reported through `onDeliveryFailure`.
+  Push webhooks and personalization keep their status classification unchanged.
+- **BREAKING: consents follow the same send-once policy (INT-7436).** The three-strike rule and the
+  retry with backoff on 403/404/408/429/5xx are gone: a consent answered with anything but 2xx is
+  dropped (503/429 after their one resend) and reported through `onDeliveryFailure` as one failure
+  with `eventCount` 1 and no event ids. A consent dropped without a request (older than 30 days,
+  undecodable, unsendable) is reported too, as `dropped`. `consent(action:validUntil:)` still
+  returns only whether the record was queued and never throws for a delivery problem.
+- **The one 503/429 resend re-checks opt-out for event batches only.** An event batch is not
+  resent if the user opted out during the `Retry-After` wait. A consent is always resent, so a
+  withdrawal queued by `consent(.reject)`, which opts out at once, still reaches the server.
+
+### Added
+
+- **`variationDetail` and `onFlagError` (INT-7454).** A flag request that failed used to read
+  exactly like "flag not configured": the default, no log, no signal. `variationDetail(key:)`
+  returns `FlagDetail { value, reason, error }`: `reason` is `.error` with a `FlagError { key,
+  kind: auth | badRequest | server | timeout | network | parse, status }` on a failure, `.off`
+  when the service answered and served nothing, and `.unanswered` for a served value (the
+  serving response sends no reason). `onFlagError` is called for every failed flag request,
+  `allFlags` included, and a 401/403 is logged at error level once per instance, naming the API
+  key prefix and source. The default is still returned and nothing throws. `FlagReason` gains
+  `.error` and is now public.
+- **Evaluation is separated from exposure (INT-7456).** `allFlags` sends `exposure: false`, so a
+  bulk read no longer records an exposure or spends a `ONCE` display for experiences the app never
+  renders. A single-key read (`variation`, `variationDetail`, the typed variations) records the
+  exposure as before; each takes `disableExposure: true` for a read made ahead of rendering. Needs
+  the audience-service change that reads the field; an older service ignores it.
+- **`IntemptInstance.onDeliveryFailure` (INT-7444).** Called once per batch on its final outcome
+  with a `DeliveryFailure { kind: transport | terminal | dropped, status, eventCount, eventIds,
+  retryAfter, terminal }`. A `transport` failure (batch kept) is reported once per batch, not on
+  every flush. `track` and the other recording calls still return only whether the event was
+  queued and never fail for a delivery problem.
 
 ## [0.5.0] — unreleased
 

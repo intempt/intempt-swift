@@ -17,10 +17,10 @@ to this repo. Where the two disagree, the contract wins and this file is the bug
 - **A wrong-typed value falls back; it is never coerced.** A flag configured as a string and read as
   a boolean returns the caller's default, not `true`. Coercion makes a misconfiguration look like a
   deliberate value.
-- **`variationDetail` is NOT exposed.** It would carry a reason, and the serving response does not
-  send one — so it could only report "off" for a person who was in fact targeted and served, which
-  is the single thing such a method exists to tell you. It stays internal until the platform sends a
-  reason. Do not re-add it, and do not document it on a docs page either.
+- **`variationDetail` never guesses a reason (INT-7454).** It is public: a failed request reads
+  `.error` with a `FlagError`, an answered miss reads `.off`, and a served value reads its wire
+  reason or `.unanswered`, because the serving response sends none. Do not map `.unanswered` or
+  `.error` onto `.off`.
 - **Evaluation is REMOTE only.** No local rule engine, no flag store to poll, and no hashing utility:
   the server buckets, so no second implementation can disagree with it. `EXP-ASSIGN-004` (exact
   rollout boundaries) and `EXP-ASSIGN-005` (a person keeps their value across sign-in) are both

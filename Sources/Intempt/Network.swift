@@ -14,6 +14,9 @@
 //      401/403/429/500 — so every server error was treated as success and
 //      triggered the destructive delete (audit F-34).
 //    - Honours Retry-After.
+//    - Splits URL errors raised before the request is written (`.transport`)
+//      from those that may follow it (`.unanswered`), so event delivery keeps
+//      only what the server never saw (INT-7436, ruling R5).
 //    - Completion-handler based, matching upstream: bridging to async/await
 //      would lose the serial-queue mutual exclusion that keeps concurrent
 //      flushes from interleaving.
@@ -28,7 +31,12 @@ enum HTTPOutcome: Equatable {
     /// Carries the response body so the caller can surface the server's own
     /// message (`{"errors":[{"message":…}]}`) instead of a bare status code.
     case terminal(status: Int, body: Data?)
+    /// Never reached the server (offline, DNS, refused). Nothing was received, so the batch is
+    /// kept for the next flush.
     case transport(String)
+    /// Sent but never answered, a timeout above all. The server may hold the batch already, so it
+    /// is not resent: a resend risks a duplicate (round-2 CONTRACT S1.4).
+    case unanswered(String)
 
     var isSuccess: Bool { if case .success = self { return true } else { return false } }
 }
@@ -98,7 +106,9 @@ final class Network {
     /// under URLSession an HTTP 500 arrives with a nil error.
     static func classify(data: Data?, response: URLResponse?, error: Error?) -> HTTPOutcome {
         if let error {
-            return .transport(error.localizedDescription)
+            return neverReachedServer(error)
+                ? .transport(error.localizedDescription)
+                : .unanswered(error.localizedDescription)
         }
         guard let http = response as? HTTPURLResponse else {
             return .transport("no HTTP response")
@@ -114,6 +124,39 @@ final class Network {
             // (malformed) — retrying cannot help.
             return .terminal(status: http.statusCode, body: data)
         }
+    }
+
+    /// URL errors raised before a byte of the request could leave the device (ruling R5). Anything
+    /// else may have been received, so it is `.unanswered`, not `.transport`; the maybe-reached
+    /// list and the reasoning are in docs/CONTRACT.md "Never reached versus maybe reached".
+    static let neverReachedCodes: Set<Int> = [
+        // Offline, or the radio may not be used.
+        NSURLErrorNotConnectedToInternet,
+        NSURLErrorInternationalRoamingOff,
+        NSURLErrorCallIsActive,
+        NSURLErrorDataNotAllowed,
+        // DNS, refused, unreachable: no connection was ever open.
+        NSURLErrorCannotFindHost,
+        NSURLErrorDNSLookupFailed,
+        NSURLErrorCannotConnectToHost,
+        // TLS handshake: the request is written only after the handshake succeeds.
+        NSURLErrorSecureConnectionFailed,
+        NSURLErrorServerCertificateHasBadDate,
+        NSURLErrorServerCertificateUntrusted,
+        NSURLErrorServerCertificateHasUnknownRoot,
+        NSURLErrorServerCertificateNotYetValid,
+        NSURLErrorClientCertificateRejected,
+        NSURLErrorClientCertificateRequired,
+        // Refused by URLSession itself before any connection.
+        NSURLErrorAppTransportSecurityRequiresSecureConnection,
+        NSURLErrorBadURL,
+        NSURLErrorUnsupportedURL,
+        NSURLErrorCannotLoadFromNetwork,
+    ]
+
+    static func neverReachedServer(_ error: Error) -> Bool {
+        let ns = error as NSError
+        return ns.domain == NSURLErrorDomain && neverReachedCodes.contains(ns.code)
     }
 
     /// Honours the server's own backoff instruction, in both the delta-seconds

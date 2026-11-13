@@ -179,10 +179,11 @@ final class LiveContractTests: IntemptTestCase {
         }
         XCTAssertEqual(instance.queuedEventCount(), count)
 
-        // Retries cover a retryable answer (5xx, 429, offline). A transient 400
-        // is no longer retried: R-retry drops on the first answer, so if
-        // production repeats the transient 400 recorded in docs/CONTRACT.md
-        // this test fails, and that failure is real data loss, not a flake.
+        // Retries cover a 503/429 and a request that never reached the server.
+        // A transient 400 is not retried: send-once drops it on the first
+        // answer (docs/CONTRACT.md "Failure policy"), so if production repeats
+        // the transient 400 recorded there this test fails, and that failure
+        // is real data loss, not a flake.
         var delivered = 0
         for attempt in 1...4 {
             delivered += flush(instance, timeout: 60)
@@ -196,10 +197,10 @@ final class LiveContractTests: IntemptTestCase {
 
     // MARK: - Credentials
 
-    /// A wrong secret is answered 401, which R-retry (D9, INT-7438) drops on
-    /// the first answer, as android does. The old Obj-C SDK read a 401 as
-    /// success; this asserts it is neither counted as delivered nor kept.
-    func testBadCredentialsDropTheBatchWithoutCountingItDelivered() throws {
+    /// A wrong secret is terminal and never counts as delivered (the old Obj-C
+    /// SDK read a 401 as success). Since INT-7436 the batch is dropped and
+    /// reported through `onDeliveryFailure` instead of kept forever.
+    func testBadCredentialsDropTheBatchAndReportIt() throws {
         let credentials = try requireCredentials()
         let instance = try IntemptInstance.makeForTesting(
             apiKey: "\(credentials.apiKey.split(separator: ".")[0]).definitelyWrongSecret",
@@ -209,9 +210,13 @@ final class LiveContractTests: IntemptTestCase {
             store: defaults,
             databaseDirectory: tempDir)
 
+        let failures = Recorded()
+        instance.onDeliveryFailure = { failures.append(failure: $0) }
+
         XCTAssertTrue(instance.track(eventTitle: "Live Auth Failure"))
         XCTAssertEqual(flush(instance), 0, "a 401 delivers nothing")
-        XCTAssertEqual(instance.queuedEventCount(), 0, "and the rejected batch is dropped")
+        XCTAssertEqual(instance.queuedEventCount(), 0, "dropped, not kept forever")
+        XCTAssertEqual(failures.failures.map(\.status), [401])
     }
 
     // MARK: - Consent
