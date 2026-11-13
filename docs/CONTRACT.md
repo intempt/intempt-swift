@@ -195,21 +195,76 @@ Errors across every endpoint use:
 Parsed by `IntemptError.serverMessages(from:)` so a failure surfaces the
 server's own wording rather than a bare status code.
 
-## Transient 400s
+## Failure policy
+
+This covers event batches (`/track`) and consents (`/consents/data`) only. Push webhooks,
+personalization/feeds and choose-api keep the shared `Network.classify` table they had before
+send-once (ruling R6, Beso 2026-11-13): 408, 429, 500, 502, 503 and 504 are retryable there.
+
+| outcome | event batch or consent |
+|---|---|
+| 2xx | deleted, delivered |
+| 503 / 429, first answer | one resend after `Retry-After`, clamped to 1–60 s |
+| 503 / 429 again, or any other status | dropped, reported `terminal` |
+| maybe reached (see below) | dropped, reported `dropped`, never resent |
+| never reached (see below) | kept for the next flush, reported `transport` once |
+
+Every drop is reported through `onDeliveryFailure` (INT-7444), so no loss is silent. A consent
+dropped before any request (older than 30 days, undecodable, unsendable) is reported `dropped` too.
+
+### Never reached versus maybe reached
+
+Ruling R5. A `URLError` code is *never reached* only when URLSession raises it before the request
+can be written. Those batches are kept: nothing was received, so a resend cannot duplicate. The
+list is `Network.neverReachedCodes`:
+
+- offline or radio refused: `notConnectedToInternet`, `internationalRoamingOff`, `callIsActive`,
+  `dataNotAllowed`
+- no connection opened: `cannotFindHost`, `dnsLookupFailed`, `cannotConnectToHost` (refused,
+  unreachable)
+- TLS handshake failed, and the request is written only after it succeeds:
+  `secureConnectionFailed`, `serverCertificateHasBadDate`, `serverCertificateUntrusted`,
+  `serverCertificateHasUnknownRoot`, `serverCertificateNotYetValid`,
+  `clientCertificateRejected`, `clientCertificateRequired`
+- refused by URLSession before connecting: `appTransportSecurityRequiresSecureConnection`,
+  `badURL`, `unsupportedURL`, `cannotLoadFromNetwork`
+
+Every other error is *maybe reached*, and the batch is dropped as `dropped`. Each of these can
+fire after the request was written, so the server may already hold the batch and a resend risks a
+duplicate:
+
+- `timedOut`: the request was written and the answer did not arrive in time.
+- `networkConnectionLost`: the connection dropped mid-exchange. A pooled keep-alive socket that the
+  server had already closed is not this case: URLSession reconnects such a request once by itself
+  before it reports anything, so this code surfaces only for a loss after the write.
+- `cancelled`, `badServerResponse`, `cannotParseResponse`, `cannotDecodeRawData`,
+  `cannotDecodeContentData`, `zeroByteResource`, `httpTooManyRedirects`,
+  `redirectToNonExistentLocation`, `resourceUnavailable`, `userCancelledAuthentication`,
+  `userAuthenticationRequired`: the server, or a redirect it issued, already answered something.
+- `requestBodyStreamExhausted`, `unknown`, and any error outside `NSURLErrorDomain`: what was sent
+  cannot be known, so the duplicate-safe choice is to drop.
+
+### Transient 400s
 
 Production has been observed returning **400 to a payload it accepts moments
 later**. A 55-event drain failed its first batch with a 400; the identical
 bytes then returned 201 on six consecutive retries.
 
-Until INT-7436 the SDK kept a 400 and dropped it only after three consecutive
-rejections, with 401/403 never dropped. Round-2 CONTRACT S1 (Beso, 2026-11-11)
-replaced that: every answered status other than 503/429 drops the batch on the
-first answer and reports it through `onDeliveryFailure`. A transient 400 of the
-kind above now costs that batch; the report is how it is seen.
+How the SDK has treated that 400, in order:
 
-Live tests must therefore assert *eventual* delivery, not single-pass delivery.
-A strict one-pass assertion failed against a real transient 400 while the SDK
-had behaved exactly correctly — all 55 events were still queued, none lost.
+1. Until 2026-11-11 a 400 was kept and dropped only after three consecutive
+   rejections, so the transient 400 above was survived.
+2. Ruling R-retry (D9, INT-7438, 2026-11-11) matched intempt-android: a status
+   at 300 or above other than 403, 404, 408, 429 and 5xx dropped the batch on
+   the first answer, 401 and 402 included.
+3. Since INT-7436 (round-2 CONTRACT S1, send-once), every answered status other
+   than 503/429 drops the batch on the first answer, as in the table above.
+
+A repeat of that transient 400 therefore loses the batch, and
+`onDeliveryFailure` reports it. The live drain test retries its flush, which
+covers 503/429 and requests that never reached the server; it does not survive
+a transient 400, and if production repeats one that test fails on real data
+loss, not a flake.
 
 ## Batch size
 

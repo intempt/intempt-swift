@@ -179,12 +179,11 @@ final class LiveContractTests: IntemptTestCase {
         }
         XCTAssertEqual(instance.queuedEventCount(), count)
 
-        // Retries, because production has been observed returning a transient
-        // 400 to a payload it accepts on the next attempt. The invariant under
-        // test is that nothing is LOST and everything eventually lands — not
-        // that a live server is perfect on the first try. A single-pass
-        // assertion here failed against a real 400 while the SDK had behaved
-        // exactly right: all 55 events were still in the queue.
+        // Retries cover a 503/429 and a request that never reached the server.
+        // A transient 400 is not retried: send-once drops it on the first
+        // answer (docs/CONTRACT.md "Failure policy"), so if production repeats
+        // the transient 400 recorded there this test fails, and that failure
+        // is real data loss, not a flake.
         var delivered = 0
         for attempt in 1...4 {
             delivered += flush(instance, timeout: 60)

@@ -14,6 +14,9 @@
 //      401/403/429/500 — so every server error was treated as success and
 //      triggered the destructive delete (audit F-34).
 //    - Honours Retry-After.
+//    - Splits URL errors raised before the request is written (`.transport`)
+//      from those that may follow it (`.unanswered`), so event delivery keeps
+//      only what the server never saw (INT-7436, ruling R5).
 //    - Completion-handler based, matching upstream: bridging to async/await
 //      would lose the serial-queue mutual exclusion that keeps concurrent
 //      flushes from interleaving.
