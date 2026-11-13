@@ -98,12 +98,13 @@ final class AppLifecycle {
 
 /// Asks the OS for time to finish a flush that started as the app suspends.
 ///
-/// Without this the process is frozen mid-request, the URLSession task is
-/// cancelled, and the batch is retried on next launch — so events arrive late
-/// or, if the user never returns, not at all. Upstream wraps its flush in a
-/// background task for exactly this reason; the difference here is that the
-/// no-op path for tvOS/watchOS/macOS is explicit rather than an unbalanced
-/// `begin` with no `end`.
+/// Without this the process is frozen mid-request and the URLSession task is
+/// cancelled. A cancel (-999) is maybe-reached under ruling R5, so that batch is
+/// dropped and reported `dropped`, not resent (docs/CONTRACT.md "Never reached
+/// versus maybe reached"); this assertion is what keeps it from happening.
+/// Upstream wraps its flush in a background task for exactly this reason; the
+/// difference here is that the no-op path for tvOS/watchOS/macOS is explicit
+/// rather than an unbalanced `begin` with no `end`.
 enum BackgroundTask {
 
     /// Runs `work`, holding a background assertion until `done()` is called.
