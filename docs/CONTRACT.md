@@ -233,10 +233,11 @@ Every other error is *maybe reached*, and the batch is dropped as `dropped`. Eac
 fire after the request was written, so the server may already hold the batch and a resend risks a
 duplicate:
 
-- `timedOut`: the request was written and the answer did not arrive in time.
-- `networkConnectionLost`: the connection dropped mid-exchange. A pooled keep-alive socket that the
-  server had already closed is not this case: URLSession reconnects such a request once by itself
-  before it reports anything, so this code surfaces only for a loss after the write.
+- `timedOut` and `networkConnectionLost`. URLSession raises both before the write too (a connect
+  or TLS timeout, a fresh connection lost while opening), and the code alone cannot tell which
+  happened. R5 keeps the before-the-write case, so the SDK diverges from R5 there: it drops both,
+  the duplicate-safe choice. A pooled keep-alive socket the server had already closed is not this
+  case: URLSession reconnects such a request once by itself before it reports anything.
 - `cancelled`, `badServerResponse`, `cannotParseResponse`, `cannotDecodeRawData`,
   `cannotDecodeContentData`, `zeroByteResource`, `httpTooManyRedirects`,
   `redirectToNonExistentLocation`, `resourceUnavailable`, `userCancelledAuthentication`,

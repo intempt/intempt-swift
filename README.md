@@ -255,7 +255,7 @@ but was never answered (a timeout). Only a request that never reached the server
 `onDeliveryFailure` hears every drop, and every kept batch once, as
 `DeliveryFailure { kind: transport | terminal | dropped, status, eventCount,
 eventIds, retryAfter, terminal }`. Push webhooks and feed reads keep their own
-retries. See [docs/CONTRACT.md](docs/CONTRACT.md#failure-policy).
+status classification. See [docs/CONTRACT.md](docs/CONTRACT.md#failure-policy).
 
 ### Autocapture (iOS, tvOS)
 
