@@ -209,6 +209,11 @@ send-once (ruling R6, Beso 2026-11-13): 408, 429, 500, 502, 503 and 504 are retr
 | maybe reached (see below) | dropped, reported `dropped`, never resent |
 | never reached (see below) | kept for the next flush, reported `transport` once |
 
+Opt-out is asked again when the wait before the one resend ends. An event batch whose user opted
+out during the wait is not resent: it is dropped and reported with its first 503/429. A consent is
+resent regardless: `consent(.reject)` opts out right after it queues the withdrawal, so gating
+consents would delete the withdrawal unsent.
+
 Every drop is reported through `onDeliveryFailure` (INT-7444), so no loss is silent. A consent
 dropped before any request (older than 30 days, undecodable, unsendable) is reported `dropped` too.
 

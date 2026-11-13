@@ -23,6 +23,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with `eventCount` 1 and no event ids. A consent dropped without a request (older than 30 days,
   undecodable, unsendable) is reported too, as `dropped`. `consent(action:validUntil:)` still
   returns only whether the record was queued and never throws for a delivery problem.
+- **The one 503/429 resend re-checks opt-out for event batches only.** An event batch is not
+  resent if the user opted out during the `Retry-After` wait. A consent is always resent, so a
+  withdrawal queued by `consent(.reject)`, which opts out at once, still reaches the server.
 
 ### Added
 
