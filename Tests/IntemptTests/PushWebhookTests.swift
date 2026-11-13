@@ -210,7 +210,7 @@ final class PushWebhookTests: IntemptTestCase {
     /// and never reaches the caller as an error — a push interaction must not be
     /// able to take the host app down.
     func testAPersistentServerErrorIsSwallowed() {
-        let session = MockSession(replies: [], fallback: .status(503))
+        let session = MockSession(replies: [], fallback: .status(500))
         let done = expectation(description: "reported")
         retryingSender(session, delays: { _ in }).report(.delivered, userInfo: apnsPayload()) {
             outcome in

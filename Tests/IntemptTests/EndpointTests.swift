@@ -79,11 +79,18 @@ final class EndpointTests: XCTestCase {
     /// The old Obj-C SDK treated 401/429/500 as success and then deleted the
     /// batch. These must be classified, not conflated.
     func testRetryableStatusClassification() {
-        for s in [429, 503] {
+        for s in [408, 429, 500, 502, 503, 504] {
             XCTAssertTrue(APIConstants.retryableStatuses.contains(s), "\(s) should be retryable")
         }
-        for s in [400, 401, 402, 403, 404, 408, 422, 500, 502, 504] {
+        for s in [400, 401, 402, 403, 404, 422] {
             XCTAssertFalse(APIConstants.retryableStatuses.contains(s), "\(s) must be terminal")
         }
+    }
+
+    /// R6 (Beso, 2026-11-13): send-once narrows only event and consent delivery. The shared set
+    /// above still serves push webhooks and personalization unchanged.
+    func testDeliveryResendsOnlyOn429And503() {
+        XCTAssertEqual(APIConstants.deliveryResendStatuses, [429, 503])
+        XCTAssertTrue(APIConstants.deliveryResendStatuses.isSubset(of: APIConstants.retryableStatuses))
     }
 }

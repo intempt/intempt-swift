@@ -528,6 +528,41 @@ extension FlushTests {
         XCTAssertEqual(recorded.failures.map(\.kind), [.terminal])
     }
 
+    /// R3 + R6: a consent is sent once like an event. A 500 is final for it even though the
+    /// shared classifier calls a 500 retryable for push and feeds.
+    func testAConsentAnsweredWithAServerErrorIsDroppedNotResent() {
+        for status in [408, 500, 502, 504] {
+            db.insert(.consents, data: JSONHandler.encodeAPIData(["action": "reject"])!)
+            let failuresBefore = recorded.failures.count
+            let flush = makeFlush(fallback: .status(status))
+
+            _ = flushSync(flush)
+            XCTAssertEqual(session.requestCount, 1, "\(status) is never resent")
+            XCTAssertEqual(db.count(.consents), 0, "\(status) drops the consent")
+            XCTAssertEqual(
+                Array(recorded.failures.dropFirst(failuresBefore)),
+                [DeliveryFailure(kind: .terminal, status: status, eventCount: 1, eventIds: [], retryAfter: nil)])
+        }
+        XCTAssertTrue(recorded.delays.isEmpty)
+    }
+
+    /// R2: a consent dropped without a request is still a failed consent, so the listener hears
+    /// of it. Before, only a log line said so.
+    func testAConsentDroppedUnsentIsReported() {
+        seedConsent("accept", at: Date().addingTimeInterval(-QueueConstants.consentMaxAge - 1))
+        db.insert(.consents, data: Data("not json".utf8))
+        let flush = makeFlush(fallback: .ok())
+
+        _ = flushSync(flush)
+        XCTAssertEqual(session.requestCount, 0)
+        XCTAssertEqual(db.count(.consents), 0)
+        XCTAssertEqual(
+            recorded.failures,
+            Array(
+                repeating: DeliveryFailure(kind: .dropped, status: nil, eventCount: 1, eventIds: [], retryAfter: nil),
+                count: 2))
+    }
+
     /// The instance surface forwards to the delivery path.
     func testTheInstanceListenerReceivesTheFailure() throws {
         let session = MockSession(replies: [], fallback: .status(400))

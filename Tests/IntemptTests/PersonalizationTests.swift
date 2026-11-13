@@ -260,6 +260,24 @@ final class PersonalizationTests: IntemptTestCase {
         XCTAssertEqual(error, .retryable(status: 503, retryAfter: 12))
     }
 
+    /// R6: send-once is for event and consent delivery only. A feed read keeps the shared
+    /// classification, where a 500 is worth asking again.
+    func testAServerErrorStaysRetryableForFeeds() {
+        for status in [408, 500, 502, 504] {
+            let client = makeClient(replies: [.status(status)])
+            var result: Result<[ProductRecommendation], IntemptError>?
+            let done = expectation(description: "products \(status)")
+            client.products(feedId: "9", profileId: "pr_1", count: 5, fields: ["id"]) {
+                result = $0
+                done.fulfill()
+            }
+            wait(for: [done], timeout: 2)
+
+            guard case .failure(let error) = result else { return XCTFail("expected failure") }
+            XCTAssertEqual(error, .retryable(status: status, retryAfter: nil), "\(status)")
+        }
+    }
+
     func testTransportFailureIsReported() {
         let client = makeClient(replies: [.offline()])
         var result: Result<[ProductRecommendation], IntemptError>?

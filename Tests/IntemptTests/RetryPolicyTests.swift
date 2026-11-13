@@ -16,7 +16,11 @@ final class RetryPolicyTests: XCTestCase {
             XCTAssertNotNil(
                 RetryPolicy.resendDelay(after: .retryable(status: status, retryAfter: nil), isResend: false))
         }
+        // The shared classifier still calls 408/500/502/504 retryable for push and feeds (R6);
+        // delivery must not resend them.
         for outcome: HTTPOutcome in [
+            .retryable(status: 408, retryAfter: nil), .retryable(status: 500, retryAfter: 5),
+            .retryable(status: 502, retryAfter: nil), .retryable(status: 504, retryAfter: nil),
             .terminal(status: 500, body: nil), .terminal(status: 401, body: nil),
             .unanswered("timed out"), .transport("offline"),
         ] {
@@ -44,6 +48,11 @@ final class RetryPolicyTests: XCTestCase {
             XCTAssertEqual(
                 RetryPolicy.disposition(for: .terminal(status: status, body: nil)), .drop(.terminal),
                 "\(status)")
+        }
+        for status in [408, 500, 502, 504] {
+            XCTAssertEqual(
+                RetryPolicy.disposition(for: .retryable(status: status, retryAfter: nil)), .drop(.terminal),
+                "\(status) is retryable only for push and feeds")
         }
     }
 
