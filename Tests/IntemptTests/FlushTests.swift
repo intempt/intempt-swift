@@ -426,6 +426,26 @@ extension FlushTests {
         XCTAssertEqual(session.requestCount, 1, "the held batch is not resent after opt-out")
     }
 
+    /// consent(.reject) opts the person out right after queuing the withdrawal, so the
+    /// opt-out gate must not cover consents: a withdrawal answered 503 is still resent
+    /// once and delivered (impact:F1, mcp-1794581723-60).
+    func testAConsentWithdrawalIsResentAfterOptOut() {
+        db.insert(.consents, data: JSONHandler.encodeAPIData(["action": "reject"])!)
+        session = MockSession(replies: [.status(503, headers: ["Retry-After": "2"]), .ok()])
+        let flush = Flush(
+            db: db,
+            network: Network(session: session),
+            credentials: try! IntemptCredentials(apiKey: "pfx.secret"),
+            orgId: "acme", projectId: "web", sourceId: "42",
+            resendScheduler: { _, work in work() })
+        flush.isPermitted = { false }
+
+        _ = flushSync(flush)
+        XCTAssertEqual(session.requestCount, 2, "the withdrawal gets its one resend")
+        XCTAssertEqual(session.bodies.last?["action"] as? String, "reject")
+        XCTAssertEqual(db.count(.consents), 0, "delivered on the resend, not dropped")
+    }
+
     func test429IsResentOnceToo() {
         seedEvents(db, count: 1)
         let flush = makeFlush(replies: [.status(429), .ok()])

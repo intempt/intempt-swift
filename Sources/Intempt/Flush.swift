@@ -267,7 +267,7 @@ final class Flush {
         }
         let head = goodIds[0]
 
-        deliver(request) { outcome in
+        deliver(request, gatedByOptOut: true) { outcome in
             switch RetryPolicy.disposition(for: outcome) {
             case .deleteBatch:
                 self.db.delete(.events, ids: goodIds)
@@ -296,9 +296,12 @@ final class Flush {
     /// Sends `request` and, for a first 503/429 only, once more after the
     /// clamped Retry-After. The claim stays held through the wait, so no other
     /// pass can pick the rows up. `done` receives the final outcome, on `queue`.
+    /// Only event batches are gated by opt-out: consent(.reject) opts out right after
+    /// queuing the withdrawal, and a gate there would delete it unsent.
     private func deliver(
         _ request: URLRequest,
         isResend: Bool = false,
+        gatedByOptOut: Bool = false,
         done: @escaping (HTTPOutcome) -> Void
     ) {
         network.send(request) { [weak self] outcome in
@@ -309,8 +312,9 @@ final class Flush {
                 self.resendScheduler(delay) { [weak self] in
                     guard let self else { return }
                     self.queue.async {
-                        guard self.isPermitted() else { return done(outcome) }
-                        self.deliver(request, isResend: true, done: done)
+                        if gatedByOptOut && !self.isPermitted() { return done(outcome) }
+                        self.deliver(
+                            request, isResend: true, gatedByOptOut: gatedByOptOut, done: done)
                     }
                 }
             }
