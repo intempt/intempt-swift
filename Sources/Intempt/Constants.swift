@@ -31,10 +31,15 @@ enum APIConstants {
     /// Seconds between timer-driven flushes.
     static let flushInterval: TimeInterval = 60
 
-    /// The only statuses that earn a resend, and only one (INT-7436, round-2 CONTRACT S1). Every
-    /// other answer is final: a 500 or a 408 may already have been processed, so resending it
-    /// risks a duplicate, and a 4xx will be refused again byte for byte.
-    static let retryableStatuses: Set<Int> = [429, 503]
+    /// Statuses worth retrying, for push webhooks and personalization. Everything else non-2xx is
+    /// terminal — the old Obj-C SDK treated all of them as success and deleted the batch.
+    static let retryableStatuses: Set<Int> = [408, 429, 500, 502, 503, 504]
+
+    /// Event and consent delivery narrow `retryableStatuses` to these, with one resend
+    /// (INT-7436, round-2 CONTRACT S1). Every other answer is final there: a 500 or a 408 may
+    /// already have been processed, so resending risks a duplicate. Kept separate from the shared
+    /// set by ruling R6 (Beso, 2026-11-13): send-once must not change push or feeds.
+    static let deliveryResendStatuses: Set<Int> = [429, 503]
 
     /// Bounds, in seconds, on the wait before that one resend. `Retry-After` is clamped into
     /// them; without the header the wait is the floor.

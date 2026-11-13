@@ -37,7 +37,9 @@ enum RetryPolicy {
 
     /// The wait before the single resend, or nil when the outcome is final.
     static func resendDelay(after outcome: HTTPOutcome, isResend: Bool) -> TimeInterval? {
-        guard !isResend, case .retryable(_, let retryAfter) = outcome else { return nil }
+        guard !isResend, case .retryable(let status, let retryAfter) = outcome,
+            APIConstants.deliveryResendStatuses.contains(status)
+        else { return nil }
         return clampedDelay(retryAfter)
     }
 
@@ -46,7 +48,8 @@ enum RetryPolicy {
         return min(max(requested, APIConstants.minResendDelay), APIConstants.maxResendDelay)
     }
 
-    /// The verdict on a FINAL outcome. A `.retryable` here is one whose resend was already spent.
+    /// The verdict on a FINAL outcome. A `.retryable` here is a 429/503 whose resend was already
+    /// spent, or a status only push and feeds retry (408, 500, 502, 504).
     static func disposition(for outcome: HTTPOutcome) -> Disposition {
         switch outcome {
         case .success: return .deleteBatch

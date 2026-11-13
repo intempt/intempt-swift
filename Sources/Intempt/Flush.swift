@@ -358,18 +358,16 @@ final class Flush {
         if let inserted = db.insertedAt(.consents, id: row.id),
             Date().timeIntervalSince(inserted) > QueueConstants.consentMaxAge
         {
-            IntemptLogger.shared.log(
-                .error,
-                "dropping consent record: undelivered for over "
-                    + "\(Int(QueueConstants.consentMaxAge / 86_400)) days")
             db.delete(.consents, ids: [row.id])
             consentTransportReported.remove(row.id)
+            reportConsentDropped(
+                "undelivered for over \(Int(QueueConstants.consentMaxAge / 86_400)) days")
             return drainConsents(done: done)
         }
 
         guard let body = JSONHandler.deserializeData(row.data) as? [String: Any] else {
-            IntemptLogger.shared.log(.warning, "dropping undecodable consent record")
             db.delete(.consents, ids: [row.id])
+            reportConsentDropped("undecodable")
             return drainConsents(done: done)
         }
 
@@ -378,8 +376,8 @@ final class Flush {
             request = try network.makeRequest(
                 endpoint: consentEndpoint, credentials: credentials, body: body)
         } catch {
-            IntemptLogger.shared.log(.error, "dropping unsendable consent record: \(error)")
             db.delete(.consents, ids: [row.id])
+            reportConsentDropped("unsendable: \(error)")
             return drainConsents(done: done)
         }
 
@@ -409,6 +407,14 @@ final class Flush {
                 done()
             }
         }
+    }
+
+    /// A consent dropped before any request is still a failed consent, so it reaches the listener
+    /// like one the server refused (ruling R2: reported, never silent). Must be called on `queue`.
+    private func reportConsentDropped(_ reason: String) {
+        IntemptLogger.shared.log(.error, "dropping consent record (\(reason)); it will not be sent")
+        onDeliveryFailure?(
+            DeliveryFailure(kind: .dropped, status: nil, eventCount: 1, eventIds: [], retryAfter: nil))
     }
 
     // MARK: - Test seams

@@ -117,24 +117,38 @@ final class Network {
         case let s where APIConstants.retryableStatuses.contains(s):
             return .retryable(status: s, retryAfter: retryAfter(from: http))
         default:
-            // Final: 4xx is refused again byte for byte, and a 5xx other than
-            // 503 may already have been processed (see `retryableStatuses`).
+            // 401/403 (bad credentials), 402 (analytics capped), 400/422
+            // (malformed) — retrying cannot help.
             return .terminal(status: http.statusCode, body: data)
         }
     }
 
-    /// URL errors raised before a byte of the request could leave the device. Anything else may
-    /// have been received, so it is `.unanswered`, not `.transport`.
+    /// URL errors raised before a byte of the request could leave the device (ruling R5). Anything
+    /// else may have been received, so it is `.unanswered`, not `.transport`; the maybe-reached
+    /// list and the reasoning are in docs/CONTRACT.md "Never reached versus maybe reached".
     static let neverReachedCodes: Set<Int> = [
+        // Offline, or the radio may not be used.
         NSURLErrorNotConnectedToInternet,
-        NSURLErrorCannotFindHost,
-        NSURLErrorCannotConnectToHost,
-        NSURLErrorDNSLookupFailed,
         NSURLErrorInternationalRoamingOff,
         NSURLErrorCallIsActive,
         NSURLErrorDataNotAllowed,
+        // DNS, refused, unreachable: no connection was ever open.
+        NSURLErrorCannotFindHost,
+        NSURLErrorDNSLookupFailed,
+        NSURLErrorCannotConnectToHost,
+        // TLS handshake: the request is written only after the handshake succeeds.
         NSURLErrorSecureConnectionFailed,
+        NSURLErrorServerCertificateHasBadDate,
+        NSURLErrorServerCertificateUntrusted,
+        NSURLErrorServerCertificateHasUnknownRoot,
+        NSURLErrorServerCertificateNotYetValid,
+        NSURLErrorClientCertificateRejected,
+        NSURLErrorClientCertificateRequired,
+        // Refused by URLSession itself before any connection.
         NSURLErrorAppTransportSecurityRequiresSecureConnection,
+        NSURLErrorBadURL,
+        NSURLErrorUnsupportedURL,
+        NSURLErrorCannotLoadFromNetwork,
     ]
 
     static func neverReachedServer(_ error: Error) -> Bool {
