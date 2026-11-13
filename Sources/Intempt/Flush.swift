@@ -69,6 +69,11 @@ final class Flush {
     /// Retry-After of up to 60 s; the work it runs hops back onto `queue`.
     private let resendScheduler: (TimeInterval, @escaping () -> Void) -> Void
 
+    /// Re-asked when the resend wait ends. The wait can outlive `optOut()`, and
+    /// the held request carries the person's events, so a gate checked only
+    /// when the flush started would let it leave after opt-out returned.
+    var isPermitted: () -> Bool = { true }
+
     /// Head row ids of kept batches (and consent row ids) whose transport
     /// failure was already reported. S2 reports it once per batch: an offline
     /// device would otherwise report the same batch on every flush.
@@ -303,7 +308,10 @@ final class Flush {
                 else { return done(outcome) }
                 self.resendScheduler(delay) { [weak self] in
                     guard let self else { return }
-                    self.queue.async { self.deliver(request, isResend: true, done: done) }
+                    self.queue.async {
+                        guard self.isPermitted() else { return done(outcome) }
+                        self.deliver(request, isResend: true, done: done)
+                    }
                 }
             }
         }

@@ -186,6 +186,7 @@ public final class IntemptInstance {
         // that started it, so a gate checked only at the entry point would let
         // a report leave after `optOut()` had already returned.
         self.pushWebhook.isPermitted = { [weak self] in self?.hasOptedOut() == false }
+        self.flusher.isPermitted = { [weak self] in self?.hasOptedOut() == false }
 
         // `automatic` needs to call back into `self`, so it is built after all
         // stored properties are initialised and captures self weakly.

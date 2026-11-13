@@ -405,6 +405,27 @@ extension FlushTests {
         XCTAssertTrue(recorded.failures.isEmpty, "a batch delivered on its resend is not a failure")
     }
 
+    /// The 503/429 resend waits up to 60 s holding the person's batch; an
+    /// opt-out during that wait must stop it from leaving (security:F1).
+    func testNoResendAfterOptOutDuringTheRetryAfterWait() {
+        seedEvents(db, count: 2)
+        var permitted = true
+        session = MockSession(replies: [.status(503, headers: ["Retry-After": "5"]), .ok()])
+        let flush = Flush(
+            db: db,
+            network: Network(session: session),
+            credentials: try! IntemptCredentials(apiKey: "pfx.secret"),
+            orgId: "acme", projectId: "web", sourceId: "42",
+            resendScheduler: { _, work in
+                permitted = false
+                work()
+            })
+        flush.isPermitted = { permitted }
+
+        XCTAssertEqual(flushSync(flush), 0)
+        XCTAssertEqual(session.requestCount, 1, "the held batch is not resent after opt-out")
+    }
+
     func test429IsResentOnceToo() {
         seedEvents(db, count: 1)
         let flush = makeFlush(replies: [.status(429), .ok()])
