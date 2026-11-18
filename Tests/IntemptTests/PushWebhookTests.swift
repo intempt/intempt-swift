@@ -179,6 +179,83 @@ final class PushWebhookTests: IntemptTestCase {
         XCTAssertNil(PushWebhookBody.make(metadata: metadata, status: .delivered)["type"])
     }
 
+    // MARK: - Run identity (INT-5960)
+
+    /// The eight ids plus the run ids a journey's send carries.
+    private func runStampedFields(runId: Any = "run-1", subrunId: Any = "sub-1") -> [String: Any] {
+        [
+            "orgId": 1, "projectId": 2, "destinationId": 3, "masterId": 4,
+            "accountId": 5, "pipelineId": 6, "transformerId": 7, "templateId": 8,
+            "runId": runId, "subrunId": subrunId,
+        ]
+    }
+
+    /// A journey waiting on this push's outcome accepts only a report addressed
+    /// to its run. destinations-processor already stamps both ids into the
+    /// metadata; the report has to carry them back.
+    func testAJourneySendReportsItsRunIdsInTheApnsShape() throws {
+        let metadata = try XCTUnwrap(PushMetadata(userInfo: apnsPayload(metadata: runStampedFields())))
+        let body = PushWebhookBody.make(metadata: metadata, status: .opened)
+
+        XCTAssertEqual(body["runId"] as? String, "run-1")
+        XCTAssertEqual(body["subrunId"] as? String, "sub-1")
+        XCTAssertEqual(body.count, 13, "the eleven fields plus the two run ids")
+    }
+
+    func testAJourneySendReportsItsRunIdsInTheStringifiedShape() throws {
+        let payload: [AnyHashable: Any] = [
+            "metadata": """
+            {"orgId":"1","projectId":"2","destinationId":"3","masterId":"4",\
+            "accountId":"5","pipelineId":"6","transformerId":"7","templateId":"8",\
+            "runId":"run-1","subrunId":"sub-1"}
+            """
+        ]
+        let metadata = try XCTUnwrap(PushMetadata(userInfo: payload))
+        let body = PushWebhookBody.make(metadata: metadata, status: .delivered)
+
+        XCTAssertEqual(body["runId"] as? String, "run-1")
+        XCTAssertEqual(body["subrunId"] as? String, "sub-1")
+    }
+
+    /// A send outside a journey keeps the exact eleven-field body it had.
+    func testASendWithoutRunIdsKeepsTheElevenFieldBody() throws {
+        let metadata = try XCTUnwrap(PushMetadata(userInfo: apnsPayload()))
+        let body = PushWebhookBody.make(metadata: metadata, status: .opened)
+
+        XCTAssertNil(body["runId"])
+        XCTAssertNil(body["subrunId"])
+        XCTAssertEqual(body.count, 11)
+    }
+
+    /// The run ids are optional: a missing or empty one never abandons the
+    /// report the way a missing campaign id does.
+    func testRunIdsAreOptionalAndAnEmptyOneIsNotSent() throws {
+        let metadata = try XCTUnwrap(
+            PushMetadata(userInfo: apnsPayload(metadata: runStampedFields(subrunId: ""))))
+        let body = PushWebhookBody.make(metadata: metadata, status: .opened)
+
+        XCTAssertEqual(body["runId"] as? String, "run-1")
+        XCTAssertNil(body["subrunId"], "an empty subrunId is absent, not \"\"")
+    }
+
+    func testANumericRunIdIsSentAsAString() throws {
+        let metadata = try XCTUnwrap(
+            PushMetadata(userInfo: apnsPayload(metadata: runStampedFields(runId: 42, subrunId: 7))))
+        let body = PushWebhookBody.make(metadata: metadata, status: .opened)
+
+        XCTAssertEqual(body["runId"] as? String, "42")
+        XCTAssertEqual(body["subrunId"] as? String, "7")
+    }
+
+    func testABooleanRunIdIsNotSent() throws {
+        let metadata = try XCTUnwrap(
+            PushMetadata(userInfo: apnsPayload(metadata: runStampedFields(runId: true))))
+        let body = PushWebhookBody.make(metadata: metadata, status: .opened)
+
+        XCTAssertNil(body["runId"], "a boolean is not a run id, as it is not a campaign id")
+        XCTAssertEqual(body["subrunId"] as? String, "sub-1")
+    }
+
     // MARK: - Transport
 
     func testReportPostsToTheWebhookWithBasicAuth() throws {
@@ -237,6 +314,16 @@ final class PushWebhookTests: IntemptTestCase {
         XCTAssertEqual(
             session.requests.first?.url?.path, "/webhooks/events/push-notification",
             "the analytics flush uses a different path; this must be the webhook")
+    }
+
+    func testTrackPushOpenOnAJourneySendReportsTheRunIds() throws {
+        let session = MockSession(replies: [.ok()])
+        XCTAssertTrue(try instance(session).trackPushOpen(apnsPayload(metadata: runStampedFields())))
+
+        waitUntil("webhook posted") { session.requestCount == 1 }
+        XCTAssertEqual(session.bodies.first?["status"] as? String, "opened")
+        XCTAssertEqual(session.bodies.first?["runId"] as? String, "run-1")
+        XCTAssertEqual(session.bodies.first?["subrunId"] as? String, "sub-1")
     }
 
     func testTrackPushReceivedReportsDeliveredWhenNotificationsAreAllowed() throws {

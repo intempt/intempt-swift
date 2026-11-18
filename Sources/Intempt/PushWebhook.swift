@@ -65,6 +65,16 @@ struct PushMetadata: Equatable {
     let accountId: String
     let templateId: String
 
+    /// The journey run that sent the push, when one did.
+    ///
+    /// Optional, unlike the eight above. destinations-processor stamps both only
+    /// on a run's sends (`PushNotificationConverter.contextToCustomProperties`), and
+    /// a journey waiting on this push's outcome accepts only a report addressed
+    /// to its run, so dropping them leaves the run waiting on an open that
+    /// already happened.
+    let runId: String?
+    let subrunId: String?
+
     /// Order is the server's field order, not alphabetical, so a diff against
     /// `PushNotificationEvent.java` reads straight down.
     static let requiredKeys = [
@@ -94,6 +104,8 @@ struct PushMetadata: Equatable {
         pipelineId = read["pipelineId"]!
         transformerId = read["transformerId"]!
         templateId = read["templateId"]!
+        runId = Self.scalar(fields["runId"])
+        subrunId = Self.scalar(fields["subrunId"])
     }
 
     /// Accepts the APNs object form and the Firebase string form.
@@ -144,8 +156,12 @@ enum PushWebhookBody {
     /// title. Android does the same with "firebase_cloud_messaging", and a
     /// campaign whose Android rows say one thing and whose iOS rows say another
     /// cannot be read as one report.
+    ///
+    /// `runId` and `subrunId` are added only when the send carried them, the same
+    /// "stamp only when present" rule the converter uses, so a report for a send
+    /// outside a journey keeps exactly these eleven fields.
     static func make(metadata: PushMetadata, status: PushWebhookStatus) -> [String: Any] {
-        [
+        var body: [String: Any] = [
             "orgId": metadata.orgId,
             "projectId": metadata.projectId,
             "destinationId": metadata.destinationId,
@@ -158,6 +174,9 @@ enum PushWebhookBody {
             "destinationType": destinationType,
             "status": status.rawValue,
         ]
+        if let runId = metadata.runId, !runId.isEmpty { body["runId"] = runId }
+        if let subrunId = metadata.subrunId, !subrunId.isEmpty { body["subrunId"] = subrunId }
+        return body
     }
 }
 
