@@ -191,4 +191,110 @@ final class SessionLifecycleTests: IntemptTestCase {
             endIndex!, startIndices[1],
             "the end of session 1 must precede the start of session 2: \(names)")
     }
+
+    // MARK: - Sessions an app never tracks into (INT-5604)
+
+    private func post(_ transition: AppTransition) throws {
+        guard let name = AppLifecycle.notificationMap.first(where: { $0.1 == transition })?.0 else {
+            throw XCTSkip("this platform reports no app transitions")
+        }
+        NotificationCenter.default.post(name: name, object: nil)
+    }
+
+    /// Claimed rows included: the background handler starts a flush, and a flush claims what it reads.
+    private func queuedEvents(_ instance: IntemptInstance) -> [[String: Any]] {
+        let rows = instance.db.read(.events, limit: 100) + instance.db.read(.events, limit: 100, flag: true)
+        // A flush can claim a row between the two reads, so the same row may come back twice.
+        var seen = Set<Int32>()
+        return rows.filter { seen.insert($0.id).inserted }.sorted { $0.id < $1.id }.compactMap {
+            JSONHandler.deserializeData($0.data) as? [String: Any]
+        }
+    }
+
+    private func names(_ events: [[String: Any]]) -> [String] {
+        events.compactMap { $0["name"] as? String }
+    }
+
+    private func sessionId(of entry: [String: Any]) -> String? {
+        (entry["payload"] as? [[String: Any]])?.first?["sessionId"] as? String
+    }
+
+    /// Deliveries are held, so the flush a background starts cannot delete the rows under the assertions.
+    private func makeLifecycleInstance() throws -> IntemptInstance {
+        let session = MockSession()
+        session.deferCompletions = true
+        return try IntemptInstance.makeForTesting(
+            store: defaults, databaseDirectory: tempDir, network: Network(session: session),
+            automaticEvents: AutomaticEventOptions(sessions: true))
+    }
+
+    /// An app that only calls `initialize` still has a session. The launch's own foreground
+    /// transition and the first tracked event belong to that session and must not start another.
+    func testInitializeStartsASessionWithoutATrackedEvent() throws {
+        let instance = try IntemptInstance.initialize(
+            apiKey: "pfx.secret", orgId: "o", projectId: "p", sourceId: "s",
+            instanceName: "int5604-\(UUID().uuidString)")
+        defer { instance.db.deleteAll(.events) }
+
+        let atLaunch = queuedEvents(instance)
+        XCTAssertEqual(names(atLaunch), ["Session start"])
+        XCTAssertEqual(atLaunch.first.flatMap(sessionId(of:)), instance.getSessionId())
+
+        try post(.foreground)
+        XCTAssertTrue(instance.track(eventTitle: "First"))
+        XCTAssertEqual(
+            names(queuedEvents(instance)), ["Session start", "First"],
+            "one start per session, not one per foreground or per event")
+    }
+
+    /// The issue's repro: opened, backgrounded, reopened, nothing tracked.
+    func testReturningToTheForegroundStartsTheNextSessionAfterTheEnd() throws {
+        let instance = try makeLifecycleInstance()
+
+        try post(.foreground)
+        try post(.background)
+        try post(.foreground)
+        waitUntil("a start for the reopened session") {
+            self.names(self.queuedEvents(instance)).filter { $0 == "Session start" }.count == 2
+        }
+
+        let events = queuedEvents(instance)
+        XCTAssertEqual(names(events), ["Session start", "Session end", "Session start"])
+        guard events.count == 3 else { return }
+        let first = sessionId(of: events[0])
+        XCTAssertNotNil(first)
+        XCTAssertEqual(sessionId(of: events[1]), first, "the end closes the session that started")
+        XCTAssertNotEqual(sessionId(of: events[2]), first)
+        XCTAssertEqual(sessionId(of: events[2]), instance.getSessionId())
+    }
+
+    /// A terminate can follow a background with no foreground between them. The background
+    /// already closed the session; the one it opened never started, so it gets no end.
+    func testASessionThatNeverStartedSendsNoEnd() throws {
+        let instance = try makeLifecycleInstance()
+
+        try post(.foreground)
+        try post(.background)
+        try post(.terminate)
+        try post(.foreground)
+        waitUntil("a start for the reopened session") {
+            self.names(self.queuedEvents(instance)).filter { $0 == "Session start" }.count == 2
+        }
+
+        XCTAssertEqual(
+            names(queuedEvents(instance)), ["Session start", "Session end", "Session start"],
+            "exactly one end, for the one session that started")
+    }
+
+    func testForegroundSessionStartRespectsOptOut() throws {
+        let instance = try makeLifecycleInstance()
+        instance.optOut()
+
+        try post(.foreground)
+        try post(.background)
+        try post(.foreground)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+
+        XCTAssertEqual(queuedEvents(instance).count, 0)
+    }
 }
