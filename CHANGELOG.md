@@ -14,7 +14,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   event in that session do not start it again. A session that never started (the one a background
   opens before a terminate, for example) gets no "Session end". Opt-out still suppresses both.
 
-## [0.6.0] — unreleased
+## [0.6.0] — 2026-11-14
 
 ### Changed
 
@@ -60,7 +60,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   every flush. `track` and the other recording calls still return only whether the event was
   queued and never fail for a delivery problem.
 
-## [0.5.0] — unreleased
+## [0.5.0] — 2026-11-12
 
 ### Fixed
 
