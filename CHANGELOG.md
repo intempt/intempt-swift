@@ -49,6 +49,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   every flush. `track` and the other recording calls still return only whether the event was
   queued and never fail for a delivery problem.
 
+### Fixed
+
+- **Every session sends "Session start", not only sessions with a tracked event (INT-5604).** The
+  start went out only from the tracking path, while the background close sent "Session end"
+  regardless, so an app that only called `initialize` sent ends and no starts. `initialize` and
+  each return to the foreground now start the current session; the launch foreground and the first
+  event in that session do not start it again. A session that never started (the one a background
+  opens before a terminate, for example) gets no "Session end". Opt-out still suppresses both.
+
 ## [0.5.0] — unreleased
 
 ### Fixed

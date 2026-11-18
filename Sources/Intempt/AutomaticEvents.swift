@@ -116,6 +116,12 @@ final class AutomaticEvents {
             AutomaticProperties.userAttributes())
     }
 
+    /// Whether "Session start" went out for `sessionId`. The instance asks before ending a
+    /// session, so an end never arrives for a session the backend never saw start (INT-5604).
+    func hasStarted(sessionId: String) -> Bool {
+        lock.read { lastSessionId == sessionId }
+    }
+
     /// Emits "Session end" for a session that is over.
     ///
     /// The iOS source provisions a SessionEnd collection, so without this it

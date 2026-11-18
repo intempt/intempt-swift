@@ -97,6 +97,8 @@ public final class IntemptInstance {
                 sourceId: sourceId, instanceName: instanceName,
                 useIPAddressForGeolocation: useIPAddressForGeolocation)
             instances[instanceName] = created
+            // Before checkVersion, so App Install lands inside a started session.
+            created.beginSessionIfNeeded()
             created.automatic.checkVersion()
             created.flusher.startTimer()
             return created
@@ -208,14 +210,23 @@ public final class IntemptInstance {
 
         self.lifecycle = AppLifecycle { [weak self] transition in
             guard let self else { return }
+            // Ahead of `note`, so "Session start" precedes "Application Opened".
+            if transition == .foreground {
+                self.beginSessionIfNeeded()
+            }
             self.automatic.note(transition)
             switch transition {
             case .background, .terminate:
+                // `closeCurrentSession` discards a session that rolled on idle
+                // without being reported, so that one is ended first.
+                if let rolled = self.identity.takeEndedSession() {
+                    self.endIfStarted(rolled)
+                }
                 // Close the session deliberately rather than waiting for the
                 // 30-minute idle rollover: leaving the app IS the end of the
                 // session, and a duration that keeps counting while the app is
                 // closed is not a session length.
-                self.automatic.endSession(self.identity.closeCurrentSession())
+                self.endIfStarted(self.identity.closeCurrentSession())
 
                 // Hold a background assertion so a flush that starts as the app
                 // suspends is not frozen mid-request.
@@ -669,14 +680,7 @@ public final class IntemptInstance {
         // cannot be re-entered. Doing it inside the lock deadlocks on the first
         // event of every session. `IdentityManager` has its own lock, so
         // ordering these before the barrier is safe.
-        identity.recordActivity()
-
-        // A session that rolled on idle has to have its "Session end" emitted
-        // BEFORE the new session's start, or the two arrive out of order.
-        if let ended = identity.takeEndedSession() {
-            automatic.endSession(ended)
-        }
-        automatic.noteActivity(sessionId: identity.sessionId)
+        beginSessionIfNeeded()
         identity.countEvent()
 
         return stateQueue.sync {
@@ -711,6 +715,34 @@ public final class IntemptInstance {
             db.trim(.events, to: QueueConstants.maxQueueSize)
             return inserted
         }
+    }
+
+    /// Starts the current session if "Session start" has not gone out for it.
+    ///
+    /// Runs at `initialize` and on every foreground as well as on each event: an app
+    /// that tracks nothing still has sessions, and the background close ends them
+    /// (INT-5604). Must run outside `stateQueue`; see the note in `enqueue`.
+    private func beginSessionIfNeeded() {
+        identity.recordActivity()
+
+        // A session that rolled on idle has to have its "Session end" emitted
+        // BEFORE the new session's start, or the two arrive out of order.
+        if let ended = identity.takeEndedSession() {
+            endIfStarted(ended)
+        }
+        // Checked here rather than left to `enqueueAutomatic`'s gate: a start swallowed
+        // there still marks the session started, and after `optIn` that session would
+        // get an end with no start.
+        guard !hasOptedOut() else { return }
+        automatic.noteActivity(sessionId: identity.sessionId)
+    }
+
+    /// The background close opens the next session before anything starts it, so a
+    /// second close (terminate after background, or a long idle before the next
+    /// foreground) would otherwise end a session the backend never saw start.
+    private func endIfStarted(_ ended: IdentityManager.EndedSession) {
+        guard automatic.hasStarted(sessionId: ended.sessionId) else { return }
+        automatic.endSession(ended)
     }
 
     /// Path for events the SDK generates itself.
