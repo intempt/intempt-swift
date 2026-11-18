@@ -204,7 +204,9 @@ final class SessionLifecycleTests: IntemptTestCase {
     /// Claimed rows included: the background handler starts a flush, and a flush claims what it reads.
     private func queuedEvents(_ instance: IntemptInstance) -> [[String: Any]] {
         let rows = instance.db.read(.events, limit: 100) + instance.db.read(.events, limit: 100, flag: true)
-        return rows.sorted { $0.id < $1.id }.compactMap {
+        // A flush can claim a row between the two reads, so the same row may come back twice.
+        var seen = Set<Int32>()
+        return rows.filter { seen.insert($0.id).inserted }.sorted { $0.id < $1.id }.compactMap {
             JSONHandler.deserializeData($0.data) as? [String: Any]
         }
     }
