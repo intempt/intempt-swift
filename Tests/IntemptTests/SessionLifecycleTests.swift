@@ -192,6 +192,23 @@ final class SessionLifecycleTests: IntemptTestCase {
             "the end of session 1 must precede the start of session 2: \(names)")
     }
 
+    /// INT-5603: the server writes session_end itself, with the source stamped. The copy this SDK
+    /// sent carried no sourceId, so it showed as source -1 and keyed a phantom profile per session.
+    func testIdleRolloverSendsNoSessionEnd() throws {
+        let instance = try IntemptInstance.makeForTesting(
+            store: defaults, databaseDirectory: tempDir,
+            automaticEvents: AutomaticEventOptions(sessions: true))
+
+        XCTAssertTrue(instance.track(eventTitle: "Before"))
+        instance.identity.forceRollForTesting()
+        XCTAssertTrue(instance.track(eventTitle: "After"))
+
+        let names = instance.db.read(.events, limit: 20).compactMap {
+            (JSONHandler.deserializeData($0.data) as? [String: Any])?["name"] as? String
+        }
+        XCTAssertEqual(names, ["Session start", "Before", "Session start", "After"])
+    }
+
     // MARK: - Sessions an app never tracks into (INT-5604)
 
     private func post(_ transition: AppTransition) throws {
