@@ -202,12 +202,6 @@ public final class IntemptInstance {
                 sessionId: identity.sessionId)
         }
 
-        self.automatic.emitSessionEnd = { [weak self] sessionId, data, userAttributes in
-            guard let self else { return }
-            self.enqueueSessionEnd(
-                sessionId: sessionId, data: data, userAttributes: userAttributes)
-        }
-
         self.lifecycle = AppLifecycle { [weak self] transition in
             guard let self else { return }
             // Ahead of `note`, so "Session start" precedes "Application Opened".
@@ -217,16 +211,9 @@ public final class IntemptInstance {
             self.automatic.note(transition)
             switch transition {
             case .background, .terminate:
-                // `closeCurrentSession` discards a session that rolled on idle
-                // without being reported, so that one is ended first.
-                if let rolled = self.identity.takeEndedSession() {
-                    self.endIfStarted(rolled)
-                }
-                // Close the session deliberately rather than waiting for the
-                // 30-minute idle rollover: leaving the app IS the end of the
-                // session, and a duration that keeps counting while the app is
-                // closed is not a session length.
-                self.endIfStarted(self.identity.closeCurrentSession())
+                // Leaving the app ends the session, so the next foreground starts a new one
+                // rather than waiting out the 30-minute idle rollover.
+                self.identity.closeCurrentSession()
 
                 // Hold a background assertion so a flush that starts as the app
                 // suspends is not frozen mid-request.
@@ -681,7 +668,6 @@ public final class IntemptInstance {
         // event of every session. `IdentityManager` has its own lock, so
         // ordering these before the barrier is safe.
         beginSessionIfNeeded()
-        identity.countEvent()
 
         return stateQueue.sync {
             guard !optedOut else { return false }
@@ -725,24 +711,11 @@ public final class IntemptInstance {
     private func beginSessionIfNeeded() {
         identity.recordActivity()
 
-        // A session that rolled on idle has to have its "Session end" emitted
-        // BEFORE the new session's start, or the two arrive out of order.
-        if let ended = identity.takeEndedSession() {
-            endIfStarted(ended)
-        }
         // Checked here rather than left to `enqueueAutomatic`'s gate: a start swallowed
         // there still marks the session started, and after `optIn` that session would
         // get an end with no start.
         guard !hasOptedOut() else { return }
         automatic.noteActivity(sessionId: identity.sessionId)
-    }
-
-    /// The background close opens the next session before anything starts it, so a
-    /// second close (terminate after background, or a long idle before the next
-    /// foreground) would otherwise end a session the backend never saw start.
-    private func endIfStarted(_ ended: IdentityManager.EndedSession) {
-        guard automatic.hasStarted(sessionId: ended.sessionId) else { return }
-        automatic.endSession(ended)
     }
 
     /// Path for events the SDK generates itself.
@@ -885,30 +858,6 @@ public final class IntemptInstance {
             }
         }
         return track(eventTitle: EventNames.pushReceived, data: Push.attribution(from: userInfo))
-    }
-
-    /// Enqueues a "Session end" for a session that has already finished.
-    ///
-    /// Takes the ended session's id explicitly: by the time this runs the
-    /// current session is a different one, and stamping the event with that
-    /// would attribute the duration to the wrong session.
-    private func enqueueSessionEnd(
-        sessionId: String,
-        data: [String: IntemptType],
-        userAttributes: [String: IntemptType]
-    ) {
-        stateQueue.sync {
-            guard !optedOut else { return }
-            let model = SessionEndModel(
-                sessionId: sessionId,
-                profileId: identity.profileId,
-                name: EventNames.sessionEnd,
-                data: data,
-                userAttributes: userAttributes)
-            guard let encoded = JSONHandler.encodeAPIData(model.toEnvelopeEntry()) else { return }
-            db.insert(.events, data: encoded)
-            db.trim(.events, to: QueueConstants.maxQueueSize)
-        }
     }
 
     // MARK: - Autocapture configuration

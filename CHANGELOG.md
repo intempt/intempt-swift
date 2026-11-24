@@ -3,7 +3,16 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.1] — unreleased
+## [0.6.2] — unreleased
+
+### Fixed
+
+- **The SDK no longer sends "Session end" (INT-5603).** The server writes session_end itself, with
+  the source stamped. The copy the SDK sent arrived without a sourceId, showed as source "-1" in
+  Events > Live and created a separate profile for each ended session. Sessions still roll after
+  30 minutes idle and on background/terminate, and each new session still sends "Session start".
+
+## [0.6.1] — 2026-11-18
 
 ### Fixed
 

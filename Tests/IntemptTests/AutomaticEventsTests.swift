@@ -185,7 +185,7 @@ final class AutomaticEventsTests: IntemptTestCase {
 
     /// INT-7446 (round-2 CONTRACT S5): the session id is identity, like the profile id. It exists
     /// before `initialize` returns and every event carries it, whatever the sessions flag says;
-    /// the flag only suppresses the "Session start"/"Session end" events.
+    /// the flag only suppresses the "Session start" event.
     func testSessionsOffStillMintsASessionIdThatEveryEventCarries() throws {
         let instance = try IntemptInstance.makeForTesting(
             store: defaults, databaseDirectory: tempDir,
