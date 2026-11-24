@@ -41,7 +41,8 @@ enum EventNames {
     // oversight. The backend provisions a different set of collections for an
     // iOS source than for a web source
     // (single-metadata IosSourceInitialization.java:38-46). An iOS source gets
-    // exactly nine: Identify, SessionStart, SessionEnd, LeaveScreen,
+    // exactly nine: Identify, SessionStart, SessionEnd (written by the server,
+    // INT-5603), LeaveScreen,
     // ViewScreen, Touch, Action, EditField, AppInstallUpgrade — each with its
     // own typed Avro schema under `com.intempt.data.source.ios.`.
     //
@@ -66,9 +67,6 @@ enum EventNames {
 
     /// iOS `Action` collection — a control action that is not a value edit.
     static let action = "Action"
-
-    /// iOS `SessionEnd` collection.
-    static let sessionEnd = "Session end"
 
     // MARK: Session
 
@@ -172,15 +170,6 @@ enum EventKeys {
     enum SessionUserAttributes {
         static let deviceType = "deviceType"
         static let platform = "platform"
-    }
-
-    /// SessionEnd.data. Note the schema puts these under `data`, NOT under
-    /// `sessionAttributes` the way SessionStart does — the two events are shaped
-    /// differently and matching each one exactly is the only option.
-    enum SessionEndData {
-        static let sessionEndEventName = "sessionEndEventName"
-        static let sessionDuration = "sessionDuration"
-        static let sessionEventCount = "sessionEventCount"
     }
 
     /// LeaveScreen.data adds this to the ViewScreen field set.

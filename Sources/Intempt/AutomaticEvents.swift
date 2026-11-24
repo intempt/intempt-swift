@@ -57,14 +57,6 @@ final class AutomaticEvents {
     private let namespace: String
     private let emit: (_ name: String, _ data: [String: IntemptType]?, _ userAttributes: [String: IntemptType]?) -> Void
 
-    /// Separate from `emit` because a session end carries the id of the session
-    /// that ENDED, not the current one — routing it through the normal path
-    /// would stamp it with the new session.
-    var emitSessionEnd:
-        (_ sessionId: String, _ data: [String: IntemptType], _ userAttributes: [String: IntemptType]) -> Void = {
-            _, _, _ in
-        }
-
     private let lock = ReadWriteLock(label: "com.intempt.autoevents")
     private var lastSessionId: String?
 
@@ -116,29 +108,9 @@ final class AutomaticEvents {
             AutomaticProperties.userAttributes())
     }
 
-    /// Whether "Session start" went out for `sessionId`. The instance asks before ending a
-    /// session, so an end never arrives for a session the backend never saw start (INT-5604).
-    func hasStarted(sessionId: String) -> Bool {
-        lock.read { lastSessionId == sessionId }
-    }
-
-    /// Emits "Session end" for a session that is over.
-    ///
-    /// The iOS source provisions a SessionEnd collection, so without this it
-    /// stays permanently empty and no session-length or events-per-session
-    /// analysis is possible — the two figures the schema asks for cannot be
-    /// reconstructed after the fact.
-    func endSession(_ ended: IdentityManager.EndedSession) {
-        guard options.sessions else { return }
-
-        var data = AutomaticProperties.sessionAttributes()
-        data[EventKeys.SessionEndData.sessionEndEventName] = EventNames.sessionEnd
-        // Schema types both as double.
-        data[EventKeys.SessionEndData.sessionDuration] = ended.duration
-        data[EventKeys.SessionEndData.sessionEventCount] = Double(ended.eventCount)
-
-        emitSessionEnd(ended.sessionId, data, AutomaticProperties.userAttributes())
-    }
+    // No "Session end" here (INT-5603): the server writes session_end itself, with the source
+    // stamped. The copy this SDK used to send arrived without a sourceId, showed as source -1 and
+    // keyed a phantom profile per session.
 
     // MARK: - Version changes
 

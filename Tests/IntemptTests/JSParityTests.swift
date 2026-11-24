@@ -29,7 +29,7 @@ final class JSParityTests: XCTestCase {
     ///
     /// The backend provisions a different collection set per source type
     /// (single-metadata IosSourceInitialization.java:38-46). An iOS source gets
-    /// ViewScreen / Touch / EditField / Action / SessionEnd / LeaveScreen /
+    /// ViewScreen / Touch / EditField / Action / LeaveScreen /
     /// AppInstallUpgrade. Sending the web SDK's "Click On" here would match no
     /// collection and leave the provisioned `Touch` collection permanently
     /// empty. Cross-SDK consistency holds everywhere the two agree; where the
@@ -40,7 +40,6 @@ final class JSParityTests: XCTestCase {
         XCTAssertEqual(EventNames.touch, "Touch")
         XCTAssertEqual(EventNames.editField, "Edit Field")
         XCTAssertEqual(EventNames.action, "Action")
-        XCTAssertEqual(EventNames.sessionEnd, "Session end")
         XCTAssertEqual(EventNames.appInstallUpgrade, "App Install/Upgrade")
     }
 
