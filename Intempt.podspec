@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'Intempt'
-  s.version          = '0.6.2'
+  s.version          = '0.6.3'
   s.summary          = 'Analytics, personalization and consent for Apple platforms.'
 
   s.description      = <<-DESC
