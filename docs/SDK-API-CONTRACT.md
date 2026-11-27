@@ -373,7 +373,9 @@ Public in every SDK (ruling R1, Beso 2026-11-13): `variationDetail`, `FlagDetail
 Routes: `variation` is one `/flags/evaluate` call, which records the exposure on the server.
 `disableExposure: true` reads `/flags/all` with that one key instead, which records nothing.
 `allFlags` is one `/flags/all` call, which records nothing; the first read of each served key from
-its result sends `/flags/expose` once. `choose` is `/optimization/choose-api` and sends
+its result sends `/flags/expose` once. Swift also offers (Android gets the same pair) a non-exposing read of that
+result (`snapshot()` / `peek(key)`) plus `expose(key)`, for React Native, whose bridge copies the
+values to JS and exposes a key on its first read there; a snapshot records nothing by itself. `choose` is `/optimization/choose-api` and sends
 `"exposure": false` when `disableExposure` is set. Flag and choose reads time out after 2 s.
 Client SDKs (Swift, Android, React Native) cache an answer for 60 s only while `/flags/stream` is
 connected, drop a changed key at once, and serve the last-known value (24 h) on a failed read.

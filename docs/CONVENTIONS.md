@@ -57,7 +57,9 @@ was ruled and change the code in the same commit if the two differ.
 `allFlags()` is one `/flags/all` request, which records no exposure (F32). The returned
 `FlagValues` records the exposure itself: the first read of each served key sends `/flags/expose`
 once for that map. `keys` and `count` read no value and record nothing; `dictionary` records every
-served key, so use it only where every value is shown.
+served key, so use it only where every value is shown. `snapshot()` and `peek(_:)` record NO
+exposure; they exist for a bridge (React Native) that copies the values out and then calls
+`expose(_:)` for each key it actually uses, which shares the once-per-map bookkeeping with a read.
 
 ## Swift specifics
 

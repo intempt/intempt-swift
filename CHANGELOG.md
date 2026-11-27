@@ -34,6 +34,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   answer younger than 60 s is served from memory and a changed key is dropped at once. A failed
   read serves the last-known value (at most 24 h old) with reason `cached`.
 - Flag and choose requests time out after 2 s (S11, D19).
+- **`FlagValues.peek(_:)`, `FlagValues.snapshot()` and `FlagValues.expose(_:)`, for bridges that
+  copy `allFlags` out (React Native; PLAN §7 item 5).** `peek` and `snapshot` return the served
+  values and record NO exposure. `expose(key)` sends `/flags/expose` for that key once per map,
+  sharing the once-only bookkeeping with `subscript` and `dictionary`, and sends nothing for a key
+  that was not served with a variation. A caller that reads through `snapshot` must call `expose`
+  for each key it actually uses, or those exposures are never recorded.
 
 ## [0.6.3] — 2026-11-25
 

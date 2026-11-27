@@ -756,6 +756,68 @@ final class FlagPrefetchTests: FlagEvaluatorTestCase {
         XCTAssertEqual(remote.calls(to: .expose).count, 2)
     }
 
+    // A bridge (React Native) cannot hand JS a map that notices being read, so it copies the
+    // values without exposing and calls expose(_:) for each key JS actually reads (PLAN §7 item 5).
+
+    func testPeekAndSnapshotReadValuesWithoutExposing() {
+        let flags = makeFlags()
+        remote.reply(.all, twoServed)
+        let values = all(flags)
+
+        XCTAssertEqual(values?.peek("a"), .bool(true))
+        XCTAssertEqual(values?.peek("bare"), .number(1))
+        XCTAssertNil(values?.peek("off"))
+        XCTAssertNil(values?.peek("missing"))
+        XCTAssertEqual(values?.snapshot(), ["a": .bool(true), "b": .string("x"), "bare": .number(1)])
+        XCTAssertTrue(remote.calls(to: .expose).isEmpty)
+    }
+
+    func testAPeekLeavesTheFirstReadToExpose() {
+        let flags = makeFlags()
+        remote.reply(.all, twoServed)
+        let values = all(flags)
+        _ = values?.peek("a")
+        _ = values?.snapshot()
+        _ = values?["a"]
+        XCTAssertEqual(remote.calls(to: .expose).map { $0.body["key"] as? String }, ["a"])
+    }
+
+    func testExposeSendsTheServedVariationOnceAndSharesTheReadsDedup() {
+        let flags = makeFlags()
+        remote.reply(.all, twoServed)
+        let values = all(flags)
+
+        values?.expose("b")
+        values?.expose("b")
+        XCTAssertEqual(remote.calls(to: .expose).count, 1, "expose alone records, with no read")
+        _ = values?["b"]
+        _ = values?.dictionary
+        let exposes = remote.calls(to: .expose)
+        XCTAssertEqual(exposes.map { $0.body["key"] as? String }, ["b", "a"])
+        XCTAssertEqual(exposes.first?.body["variationId"] as? Int, 12)
+        XCTAssertEqual(exposes.first?.body["sessionId"] as? String, "se-1")
+    }
+
+    func testExposeAfterAReadSendsNothingMore() {
+        let flags = makeFlags()
+        remote.reply(.all, twoServed)
+        let values = all(flags)
+        _ = values?["a"]
+        values?.expose("a")
+        XCTAssertEqual(remote.calls(to: .expose).count, 1)
+    }
+
+    func testExposeOfAKeyNotServedWithAVariationSendsNothing() {
+        let flags = makeFlags()
+        remote.reply(.all, twoServed)
+        let values = all(flags)
+        values?.expose("missing")
+        values?.expose("off")
+        values?.expose("bare")
+        values?.expose("")
+        XCTAssertTrue(remote.calls(to: .expose).isEmpty)
+    }
+
     func testAFailedExposeWarnsOncePerKindAndNeverReachesTheHook() {
         let flags = makeFlags()
         remote.reply(.all, twoServed)

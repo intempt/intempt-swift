@@ -603,7 +603,8 @@ public final class IntemptInstance {
     ///
     /// The first read of each served key from the returned `FlagValues` records its exposure, once
     /// per map, so a screen that prefetches twelve flags and shows one counts one. `keys` and
-    /// `count` expose nothing; `dictionary` exposes every served key.
+    /// `count` expose nothing; `dictionary` exposes every served key. `snapshot()` and `peek(_:)`
+    /// expose nothing either: a caller using them calls `expose(_:)` for each key it uses.
     public func allFlags(
         context: FlagContext? = nil,
         completion: @escaping (FlagValues) -> Void

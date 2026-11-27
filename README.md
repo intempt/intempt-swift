@@ -178,6 +178,17 @@ One `/flags/all` request, which records nothing: the first read of each key from
 the returned `FlagValues` records that key's exposure, once. `keys` and `count`
 record nothing; `dictionary` records every key.
 
+A bridge that copies the values out (React Native) reads them without exposure and reports each
+key it uses itself:
+
+```swift
+let copy = values.snapshot()        // records NO exposure; values.peek("key") is the same for one key
+values.expose("new_checkout")       // once per map, for each key actually used
+```
+
+`snapshot()` and `peek(_:)` record nothing: a key you use without calling `expose(_:)` is never
+counted as exposed.
+
 ```swift
 intempt.waitForInitialization { … }   // calls back immediately
 ```
