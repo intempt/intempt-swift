@@ -3,7 +3,7 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] — unreleased
 
 ### Changed — BREAKING (semver-major)
 
