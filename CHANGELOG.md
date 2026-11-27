@@ -3,6 +3,38 @@
 All notable changes to the Intempt Swift SDK are documented here. This project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed — BREAKING (semver-major)
+
+- **Flags are read over the `/flags/*` routes; experiments and personalizations move to
+  `choose()` (SDK-ALIGN; D13, D20).** `variation`, the typed variations, `variationDetail` and
+  `allFlags` no longer call `/optimization/choose-api`, and there is no fallback to it. They read
+  FLAGS only: a key that names an experiment or personalization now returns your default with
+  `FLAG_NOT_FOUND`. Move those reads to `choose(names:groups:disableExposure:)`, which returns
+  `[Choice]`. Once audience-service stops serving flags from choose-api, a 0.6.x client reads
+  every flag as its default.
+- **`allFlags` returns `FlagValues`, not `[String: JSONValue]`.** `/flags/all` records no exposure;
+  the first read of a key from `FlagValues` sends `/flags/expose` once. `keys`/`count` record
+  nothing; `dictionary` records every key.
+- **`jsonVariation` takes and returns any `JSONValue`** (arrays and scalars included, F30 #4), not
+  `[String: JSONValue]`.
+- **`FlagDetail` gains `errorCode`, `variationId`, `valueType`, `rule` and `variant`; `FlagReason`
+  gains `notInRollout`, `killed`, `notClientSide` and `cached`.** An invalid or empty key returns
+  the default with `FLAG_NOT_FOUND` and one warning per key, with no request, no `FlagError` and no
+  `onFlagError` call (it was `bad_request` through the hook, and a DEBUG `assertionFailure` on an
+  empty key). A 404 is `FLAG_NOT_FOUND`, a 500 `GENERAL`; a value of another type than the default
+  is the default with `TYPE_MISMATCH`.
+- **429 maps to `FlagError.Kind.server`**, not `badRequest`, as in every other SDK.
+
+### Added
+
+- `/flags/stream` (server-sent events): opened on the first flag read, reconnecting with a backoff
+  of 1 s doubling to 60 s, paused while the app is in the background. While it is connected a flag
+  answer younger than 60 s is served from memory and a changed key is dropped at once. A failed
+  read serves the last-known value (at most 24 h old) with reason `cached`.
+- Flag and choose requests time out after 2 s (S11, D19).
+
 ## [0.6.3] — 2026-11-25
 
 ### Fixed

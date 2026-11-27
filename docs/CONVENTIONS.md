@@ -7,34 +7,29 @@ to this repo. Where the two disagree, the contract wins and this file is the bug
 
 ## The rules that come from the contract
 
-- **A caller asks for a KEY, never a mode.** The platform resolves whether a key is an experiment, a
-  personalization or a flag; its serving query filters on channel and status and never on mode. A
-  method name that encodes the mode forces an integrator to know the answer before they can ask the
-  question, and grows combinatorially with every mode added.
+- **Flags are read by KEY; experiments and personalizations by `choose()` (D13, D20).** A flag read
+  goes to `/flags/evaluate` (or `/flags/all`) and never to choose-api, which stops serving flags
+  once audience-service `feature/feature-flag` ships. `choose()` is the only caller of choose-api.
 - **`defaultValue` is REQUIRED, everywhere.** It is what a caller receives on a network failure, a
   timeout, an unknown key or a malformed response. An SDK that throws when the service is
   unreachable takes the application down with it, which is the opposite of what a kill switch is for.
 - **A wrong-typed value falls back; it is never coerced.** A flag configured as a string and read as
   a boolean returns the caller's default, not `true`. Coercion makes a misconfiguration look like a
   deliberate value.
-- **`variationDetail` never guesses a reason (INT-7454).** It is public: a failed request reads
-  `.error` with a `FlagError`, an answered miss reads `.off`, and a served value reads its wire
-  reason or `.unanswered`, because the serving response sends none. Do not map `.unanswered` or
-  `.error` onto `.off`.
+- **`variationDetail` never guesses a reason (INT-7454).** The server's reason is passed through;
+  an answer without one this SDK knows reads `.unanswered`, a failure reads `.error` with an
+  `errorCode`. Do not map `.unanswered` or `.error` onto `.off`.
 - **Evaluation is REMOTE only.** No local rule engine, no flag store to poll, and no hashing utility:
   the server buckets, so no second implementation can disagree with it. `EXP-ASSIGN-004` (exact
   rollout boundaries) and `EXP-ASSIGN-005` (a person keeps their value across sign-in) are both
   properties of ONE derivation, and neither can hold for a second one the platform cannot see.
   `check-no-local-bucketing.mjs` enforces this in CI over `Sources`, `Tests` and `IntemptDemo`, and
   a new bucketing helper fails the build.
-- **A validation mistake is loud in DEBUG; a service problem is absorbed everywhere.** A blank key
-  is a programming error the caller can fix, so it trips `assertionFailure` at the call site — and
-  `assertionFailure` is compiled out under `-O`, so in a shipped build the call yields
-  `defaultValue` with no signal. That is the deliberate trade: trapping someone's app over a flag
-  key is worse than the flag reading its default. This rule used to say "throws", which the code
-  has never done and should not; say what it does. A 5xx, a timeout and a malformed body are
-  absorbed in every configuration and resolve to `defaultValue`. A missing default is not a
-  runtime concern at all — `defaultValue` has no default, so omitting it does not compile.
+- **No flag call throws or traps (S11).** An empty or invalid key returns `defaultValue` with
+  `FLAG_NOT_FOUND` and one warning per key; a context naming no visitor returns it with
+  `TARGETING_KEY_MISSING`. A 5xx, a timeout and a malformed body resolve to `defaultValue` (or the
+  last-known value, reason `.cached`). A missing default is not a runtime concern at all —
+  `defaultValue` has no default, so omitting it does not compile.
 
 ## Credentials
 
@@ -59,18 +54,10 @@ was ruled and change the code in the same commit if the two differ.
 
 ## Reading every flag at once
 
-`allFlags()` is one request instead of N, and that is its cost as well as its point.
-`ExperienceChooserService.chooseApi` calls `ChooserHelper.display(...)` for **every** experience it
-retrieves, before variant choice, and `display` records the display. For an experience configured
-with the `ONCE` display mode, `allowOnce` succeeds only while the stored value is empty — so a
-single `allFlags()` burns the once-only display for every qualifying experience at once, including
-ones the app never renders. A later `variation(key:)` for one of those keys falls through to
-`Mono.empty()`, drops out of `choices`, and returns the caller's `defaultValue` permanently, which
-looks exactly like "not enrolled". It also inflates the exposure counts `EXP-SERVE-003` makes
-load-bearing for results.
-
-Prefer `variation(key:)` per key on any project that uses `ONCE`. The real fix is a non-recording
-read mode on the serving endpoint; that is an audience-service change, not an SDK one.
+`allFlags()` is one `/flags/all` request, which records no exposure (F32). The returned
+`FlagValues` records the exposure itself: the first read of each served key sends `/flags/expose`
+once for that map. `keys` and `count` read no value and record nothing; `dictionary` records every
+served key, so use it only where every value is shown.
 
 ## Swift specifics
 

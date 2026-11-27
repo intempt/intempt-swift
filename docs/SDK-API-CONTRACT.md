@@ -342,16 +342,25 @@ method withheld is the one whose entire job is to give one.
 
 #### The surface
 
+**Superseded transport (SDK-ALIGN, 2026-11-27; rulings D13, D18, D19, D20; rows F32, F15, F30, S11).**
+Flags are read over `/flags/evaluate`, `/flags/all`, `/flags/expose` and `/flags/stream`, never
+over choose-api, and experiments and personalizations move to ONE `choose()`. `variation*` no longer
+resolves an experiment or personalization by key: that is a semver-major change in every SDK that
+did. intempt-node `feature/feature-flags-node` is the reference implementation.
+
 ```
 variation(key, context, defaultValue, disableExposure = false)         -> T
-allFlags(context)                                                      -> Map<key, value>
+allFlags(context)                                                      -> Map<key, value>   (exposes on first read of a key)
 
-variationDetail(key, context, defaultValue, disableExposure = false)   -> FlagDetail {value, reason, error?}   (INT-7454)
+variationDetail(key, context, defaultValue, disableExposure = false)
+    -> FlagDetail {value, reason, errorCode?, error?, variationId?, valueType?, rule?, variant?}
 
 boolVariation   (key, context, defaultValue: Bool,   disableExposure = false)
 stringVariation (key, context, defaultValue: String, disableExposure = false)
 numberVariation (key, context, defaultValue: Number, disableExposure = false)
-jsonVariation   (key, context, defaultValue: Object, disableExposure = false)
+jsonVariation   (key, context, defaultValue: Any JSON, disableExposure = false)
+
+choose(context, names?, groups?, disableExposure = false)              -> [Choice {name, group?, body, experienceId?, variantId?, reason?}]
 
 waitForInitialization(timeout)
 
@@ -361,12 +370,20 @@ onFlagError: (FlagError) -> Void                                       (INT-7454
 Public in every SDK (ruling R1, Beso 2026-11-13): `variationDetail`, `FlagDetail`, `FlagReason`,
 `disableExposure` and `onFlagError`.
 
-`disableExposure` (INT-7456) evaluates a single key without recording an exposure or spending a
-`ONCE` display; it sends `"exposure": false` on choose-api. It defaults to `false`, so a read
-records its exposure as before. Use it for a value read ahead of rendering, then read the value
-you render without it. `allFlags` takes no flag: it always sends `exposure: false`, because a bulk
-read must not record exposures for keys the app never renders. A service that predates the field
-ignores it and records as before.
+Routes: `variation` is one `/flags/evaluate` call, which records the exposure on the server.
+`disableExposure: true` reads `/flags/all` with that one key instead, which records nothing.
+`allFlags` is one `/flags/all` call, which records nothing; the first read of each served key from
+its result sends `/flags/expose` once. `choose` is `/optimization/choose-api` and sends
+`"exposure": false` when `disableExposure` is set. Flag and choose reads time out after 2 s.
+Client SDKs (Swift, Android, React Native) cache an answer for 60 s only while `/flags/stream` is
+connected, drop a changed key at once, and serve the last-known value (24 h) on a failed read.
+
+Reasons: the server's `targeted`, `not_targeted`, `not_in_rollout`, `off`, `killed`,
+`not_client_side`, passed through; SDK-local `cached` and `error`. Error codes: `FLAG_NOT_FOUND`
+(invalid key, or 404), `TYPE_MISMATCH`, `TARGETING_KEY_MISSING`, `GENERAL`. No flag call throws.
+
+The rules below are kept for the record; where they name choose-api for a flag read, the
+paragraph above replaces them.
 
 Four rules, each of which is a correction to the shape being replaced:
 

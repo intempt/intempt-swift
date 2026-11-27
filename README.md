@@ -132,11 +132,10 @@ unfielded request returns every catalog column including raw ML embedding
 vectors — measured at **443x** the payload. Widen it on purpose, never by
 omission.
 
-### Feature flags, experiments and personalizations
+### Feature flags
 
-Read a value by KEY. Whether the key names an experiment, a personalization or a
-feature flag is the platform's business — its serving query filters on channel
-and status, never on mode — so the call does not change when the mode does.
+Flags are read by KEY over the `/flags/*` routes. Experiments and personalizations
+are not flags: read them with `choose` (below).
 
 ```swift
 intempt.boolVariation(key: "new_checkout", defaultValue: false) { on in
@@ -148,48 +147,69 @@ intempt.stringVariation(key: "pricing_cta", defaultValue: "Get started") { cta i
 }
 
 intempt.numberVariation(key: "results_per_page", defaultValue: 20) { n in … }
-intempt.jsonVariation(key: "onboarding", defaultValue: [:]) { config in … }
+intempt.jsonVariation(key: "onboarding", defaultValue: .object([:])) { config in … }
 
 // The untyped form, if you want the raw JSONValue.
 intempt.variation(key: "new_checkout", defaultValue: .bool(false)) { value in … }
 ```
 
 `defaultValue` is **required**, and that is the whole design. It is what you get
-on a network failure, a timeout, an unknown key or a malformed response. An SDK
-that throws when Intempt is unreachable takes your app down with it, which is
-the opposite of what a kill switch is for. A served value of the wrong type
-falls back to your default too — a flag configured as a string and read as a
-bool returns your default, never `true`.
+on a network failure, a timeout (2 s), an unknown key or a malformed response. No
+flag call throws. A served value of the wrong type falls back to your default too
+— a flag configured as a string and read as a bool returns your default, never
+`true` — and `variationDetail` says `TYPE_MISMATCH`.
 
-Every key at once:
+Each read is one `/flags/evaluate` request, which records the exposure. The first
+read also opens the `/flags/stream` connection; while it is connected, an answer
+younger than 60 s is served from memory, and a changed or killed flag is dropped
+at once. When a read fails, the last-known value (at most 24 h old) is served with
+reason `.cached`. Pass `disableExposure: true` to a read made ahead of rendering:
+it goes to `/flags/all` for that one key and records nothing.
+
+Every flag at once:
 
 ```swift
-intempt.allFlags { values in … }   // [String: JSONValue]
+intempt.allFlags { values in       // FlagValues
+    let on = values["new_checkout"]  // the first read of a key records its exposure
+}
 ```
 
-One request instead of N, and it evaluates only: it asks the service not to
-record an exposure or spend a `ONCE` display (INT-7456). Read the value you
-render with `variation(key:)`, which records it. Pass `disableExposure: true` to
-a single-key read made ahead of rendering. A service that predates the
-`exposure` field ignores it and records as before.
+One `/flags/all` request, which records nothing: the first read of each key from
+the returned `FlagValues` records that key's exposure, once. `keys` and `count`
+record nothing; `dictionary` records every key.
 
 ```swift
 intempt.waitForInitialization { … }   // calls back immediately
 ```
 
 Present so a call site ported from an SDK that polls a local flag store compiles
-unchanged. Evaluation here is remote — every `variation` is a request — so there
-is no local state to wait for and `timeoutMs` is accepted and ignored.
+unchanged. `timeoutMs` is accepted and ignored.
 
 ```swift
 intempt.variationDetail(key: "checkout-redesign", defaultValue: .bool(false)) { detail in … }
 intempt.onFlagError = { error in … }   // FlagError { key, kind, status }
 ```
 
-`variationDetail` returns `FlagDetail { value, reason, error }` (INT-7454). A failed
-request reads `.error` with a `FlagError`, an answered miss reads `.off`, and a
-served value reads `.unanswered`, because the serving response sends no reason
-yet. It never guesses one. `onFlagError` is called for every failed flag request.
+`variationDetail` returns `FlagDetail { value, reason, errorCode, error, variationId,
+valueType, rule, variant }`. `reason` is the server's (`targeted`, `not_targeted`,
+`not_in_rollout`, `off`, `killed`, `not_client_side`), `.cached`, `.unanswered`
+for an answer without a known reason, or `.error` with an `errorCode`
+(`FLAG_NOT_FOUND` for an invalid or unknown key, `TYPE_MISMATCH`,
+`TARGETING_KEY_MISSING`, `GENERAL`). `onFlagError` is called for every failed
+flag request.
+
+### Experiments and personalizations
+
+```swift
+intempt.choose(names: ["home_hero"]) { choices in   // [Choice]
+    let hero = choices.first { $0.name == "home_hero" }?.body
+}
+```
+
+One `/optimization/choose-api` request; `groups:` selects by group. Pass `names`
+or `groups`: leaving out both evaluates, and so exposes, every experience the
+person is eligible for. `disableExposure: true` evaluates without recording. Any
+failure completes with `[]`.
 
 **No local evaluation.** The server buckets, so no second implementation can
 disagree with it.
