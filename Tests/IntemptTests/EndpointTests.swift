@@ -65,6 +65,21 @@ final class EndpointTests: XCTestCase {
             "https://api.intempt.com/v1/acme/projects/web/optimization/choose-api")
     }
 
+    /// F32: the four flag routes sit beside choose-api under the same versioned project path.
+    func testFlagRoutes() {
+        let expected: [FlagRoute: String] = [
+            .evaluate: "/acme/projects/web/flags/evaluate",
+            .all: "/acme/projects/web/flags/all",
+            .expose: "/acme/projects/web/flags/expose",
+            .stream: "/acme/projects/web/flags/stream",
+        ]
+        for route in FlagRoute.allCases {
+            let e = Endpoint.flags(org: "acme", project: "web", route: route)
+            XCTAssertEqual(e.path, expected[route])
+            XCTAssertEqual(e.url()?.absoluteString, "https://api.intempt.com/v1" + (expected[route] ?? ""))
+        }
+    }
+
     func testFeedPath() {
         let e = Endpoint.feed(org: "acme", project: "web", feedId: "7")
         XCTAssertEqual(e.path, "/acme/projects/web/feeds/7/data")

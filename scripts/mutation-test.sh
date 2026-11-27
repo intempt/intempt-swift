@@ -59,16 +59,31 @@ MUTANTS=(
 "Sources/Intempt/JSONHandler.swift|CFGetTypeID(num) == CFBooleanGetTypeID()|CFGetTypeID(num) != CFBooleanGetTypeID()|a Bool must serialise as a JSON boolean; CFBoolean bridges to NSNumber and would otherwise go out as 1"
 "Sources/Intempt/Network.swift|request.setValue(credentials.basicAuthHeader, forHTTPHeaderField: \"Authorization\")|request.setValue(credentials.basicAuthHeader, forHTTPHeaderField: \"X-Authorization\")|the Basic auth header is what authenticates every request; a renamed header is a 401 on everything"
 "Sources/Intempt/Flush.swift|db.read(.consents, limit: 1, flag: false)|db.read(.consents, limit: 1, flag: true)|consents drain from the unclaimed set; reading claimed rows means a withdrawal is never transmitted"
-# Flags. The whole evaluation path landed with 292 production lines and no mutant, in a repo
-# whose own TESTING.md calls this gate the real bar. Each of the four below is a defect this
-# SDK actually shipped or nearly shipped.
-"Sources/Intempt/Flags.swift|guard let value = raw.map(JSONValue.from), value != .null else { return nil }|guard let value = raw.map(JSONValue.from) else { return nil }|a JSON null body is ABSENT, not a served value; .some(.null) sails past the caller's ?? defaultValue and reaches a render as null"
-"Sources/Intempt/Flags.swift|if let names { body[\"names\"] = names }|body[\"names\"] = names ?? [String]()|allFlags OMITS names; sending an empty array filters the serving query to nothing and reads as \"no flags exist\""
-"Sources/Intempt/Flags.swift|if let sessionId, !sessionId.isEmpty { body[\"sessionId\"] = sessionId }|body[\"sessionId\"] = sessionId ?? \"\"|sessionId must be sent and must not be blank; ChooserHelper then stores \"default\" and ONCE_PER_VISIT degrades to once-ever-per-profile"
-"Sources/Intempt/Flags.swift|?? .unanswered))|?? .off))|an unanswered evaluation must not read as a deliberate off state (EXP-SERVE-001); off there is a wrong answer, not a missing one"
-"Sources/Intempt/Flags.swift|return completion(FlagEvaluation(value: nil, reason: .error, error: error))|return completion(FlagEvaluation(value: nil, reason: .off))|a failed flag request must read .error with its FlagError, never as a deliberate off state (INT-7454)"
+# Flags and choose (F32/F15/F30, SDK-ALIGN). Each is a rule intempt-node's flag evaluator holds
+# and this SDK now ports; the killing test is named in FlagsTests, FlagStreamTests, ChooseTests or
+# FlagSurfaceTests.
 "Sources/Intempt/Flags.swift|!key.isEmpty && key.unicodeScalars.allSatisfy(allowedKeyCharacters.contains)|!key.isEmpty|a key the server's ^[a-zA-Z0-9_-]*$ pattern rejects must not be sent; requestToMono refuses the whole body, and the caller cannot tell that refusal from \"no flag configured\""
-"Sources/Intempt/Flags.swift|if !exposure { body[\"exposure\"] = false }|if false { body[\"exposure\"] = false }|allFlags must evaluate WITHOUT recording; otherwise one bulk read spends every ONCE display and counts exposures the app never rendered (INT-7456)"
+"Sources/Intempt/Flags.swift|if disableExposure {|if !disableExposure {|a disableExposure read must go to /flags/all, which records nothing; /flags/evaluate records the exposure the caller asked to skip"
+"Sources/Intempt/Flags.swift|== .null ? nil :|== .string(\"never\") ? nil :|a JSON null value is ABSENT: off, killed and not-targeted answers must return the caller's default with the server's reason"
+"Sources/Intempt/Flags.swift|case .cached, .unanswered, .error: return .unanswered|case .cached, .unanswered: return .unanswered|an SDK-local reason arriving on the wire must not be trusted as an answer"
+"Sources/Intempt/Flags.swift|guard let raw, let reason = FlagReason(rawValue: raw) else { return .unanswered }|guard let raw, let reason = FlagReason(rawValue: raw) else { return .off }|an answer without a known reason must not read as a deliberate off state (EXP-SERVE-001, F6 #4)"
+"Sources/Intempt/Flags.swift|if let declared, declared != rawValue { return false }|if let declared, declared == \"never\" { return false }|the server's declared valueType decides a typed read (F30 #3); a boolean served for a string flag is a TYPE_MISMATCH"
+"Sources/Intempt/Flags.swift|if notFound { forget(id) }|if false { forget(id) }|a deleted flag (404) must not come back from the cache during a later outage"
+"Sources/Intempt/Flags.swift|[.timeout, .network, .server, .parse]|[.timeout, .network, .server, .parse, .auth]|a misconfigured key (401/403) is not an outage; serving the last-known value hides it"
+"Sources/Intempt/Flags.swift|guard stream.connected else { return nil }|guard true else { return nil }|an answer is served from memory only while the stream is connected; without it nothing reports a change or a kill"
+"Sources/Intempt/Flags.swift|if entry.started < connectedAt|if entry.started < Date.distantPast|an answer from before the current connection may have missed a change while the stream was down"
+"Sources/Intempt/Flags.swift|now.timeIntervalSince(entry.at) > Flags.freshTTL|now.timeIntervalSince(entry.at) > Flags.cacheTTL|the fresh window is 60 s (F15); the 24 h window is only for a failed read"
+"Sources/Intempt/Flags.swift|cache = cache.filter|cache = cache.filter { _ in true }; _ = cache.filter|a flags_changed event must drop those keys at once, or a kill waits out the 60 s window"
+"Sources/Intempt/Flags.swift|for read in pending.values where|for read in pending.values.prefix(0) where|a change landing while a read is in flight must keep that answer from being trusted as fresh"
+"Sources/Intempt/Flags.swift|if let sessionId, !sessionId.isEmpty { body[\"sessionId\"] = sessionId }|_ = sessionId|the exposure carries the sessionId, as choose-api records it (F32, ffc4df6)"
+"Sources/Intempt/Flags.swift|if let keys { body[\"keys\"] = keys }|body[\"keys\"] = keys ?? [String]()|allFlags OMITS keys; an empty list filters the answer to nothing and reads as \"no flags exist\""
+"Sources/Intempt/FlagValues.swift|let variationId = unexposed.removeValue(forKey: key)|let variationId = unexposed[key]|the first read of a prefetched key exposes it ONCE per map; every read after it must send nothing"
+"Sources/Intempt/FlagStream.swift|delay = min(delay * 2, FlagStream.backoffMax)|delay = delay * 2|the reconnect backoff doubles to a 60 s cap; uncapped, one long outage leaves the stream down for hours after it ends"
+"Sources/Intempt/FlagTransport.swift|post(.flags(org: orgId, project: projectId, route: route), body, completion: completion)|post(.chooseApi(org: orgId, project: projectId), body, completion: completion)|flags are never read through choose-api (D20); once it stops serving them every read would be the default"
+"Sources/Intempt/FlagTransport.swift|static let timeout: TimeInterval = 2|static let timeout: TimeInterval = 10|flag and choose reads time out after 2 s (S11, D19): they block a render"
+"Sources/Intempt/FlagTransport.swift|case 429, 500...: return (.server, status)|case 500...: return (.server, status)|429 is the service's capacity, not a malformed request: the same mapping as every other SDK"
+"Sources/Intempt/Choose.swift|if disableExposure { body[\"exposure\"] = false }|if false { body[\"exposure\"] = false }|choose(disableExposure:) must evaluate without recording or spending a once display"
+"Sources/Intempt/Choose.swift|if let names { body[\"names\"] = names }|body[\"names\"] = names ?? [String]()|choose OMITS names when the caller gives none; an empty list filters the serving query to nothing"
 "Sources/Intempt/Personalization.swift|return \"mobile\"|return \"tv\"|deviceClass must stay inside ExperienceDevice (all/desktop/mobile); \"tv\" is what this SDK actually sent from tvOS, and an unmappable value fails to bind the WHOLE request so every flag read silently returns the default"
 )
 

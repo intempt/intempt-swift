@@ -26,7 +26,7 @@ INSTANCE_METHODS=(
     flush
     products
     setPushToken trackPushOpen trackPushReceived
-    variation variationDetail allFlags
+    variation variationDetail allFlags choose
     onFlagError onDeliveryFailure
     boolVariation stringVariation numberVariation jsonVariation
     waitForInitialization
@@ -37,7 +37,7 @@ AUTOCAPTURE_MEMBERS=(configure start stop isRunning)
 TYPES=(
     IntemptInstance AutocaptureOptions AutomaticEventOptions
     ConsentAction ProductRecommendation IntemptType IntemptError
-    FlagContext FlagDetail FlagReason FlagError DeliveryFailure
+    FlagContext FlagDetail FlagReason FlagError FlagErrorCode FlagValues Choice DeliveryFailure
 )
 
 # Removed capabilities must STAY removed. Without this the check only guards

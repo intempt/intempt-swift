@@ -132,6 +132,7 @@ public final class IntemptInstance {
     let flusher: Flush
     private let personalization: Personalization
     private let flags: Flags
+    private let chooser: Choose
     let pushWebhook: PushWebhookSender
     var automatic: AutomaticEvents!
     /// Held so its observers live as long as the instance; `deinit` removes them.
@@ -179,9 +180,25 @@ public final class IntemptInstance {
         self.personalization = Personalization(
             network: network, credentials: credentials,
             orgId: orgId, projectId: projectId, sourceId: sourceId)
+        let flagTransport = FlagTransport(
+            network: network, credentials: credentials, orgId: orgId, projectId: projectId)
         self.flags = Flags(
-            network: network, credentials: credentials,
-            orgId: orgId, projectId: projectId, sourceId: sourceId)
+            deps: Flags.Deps(
+                sourceId: sourceId,
+                device: Personalization.deviceClass,
+                keyPrefix: credentials.prefix,
+                post: { route, body, done in flagTransport.post(route, body, completion: done) },
+                openStream: { flagTransport.openStream($0) },
+                schedule: { delay, work in
+                    DispatchQueue.global(qos: .utility).asyncAfter(
+                        deadline: .now() + delay, execute: work)
+                },
+                now: Date.init))
+        self.chooser = Choose(
+            deps: Choose.Deps(
+                sourceId: sourceId,
+                device: Personalization.deviceClass,
+                post: { body, done in flagTransport.postChoose(body, completion: done) }))
         self.pushWebhook = PushWebhookSender(network: network, credentials: credentials)
 
         // Re-asked before every retry. The webhook's backoff outlives the call
@@ -214,6 +231,7 @@ public final class IntemptInstance {
                 // Leaving the app ends the session, so the next foreground starts a new one
                 // rather than waiting out the 30-minute idle rollover.
                 self.identity.closeCurrentSession()
+                self.flags.pauseStream()
 
                 // Hold a background assertion so a flush that starts as the app
                 // suspends is not frozen mid-request.
@@ -224,6 +242,11 @@ public final class IntemptInstance {
                 self.flusher.startTimer()
             }
         }
+    }
+
+    /// The flag stream reconnects on a timer that outlives every caller; only this ends it.
+    deinit {
+        flags.close()
     }
 
     /// Test-only constructor: injects the store, database directory and network.
@@ -494,14 +517,36 @@ public final class IntemptInstance {
             completion: completion)
     }
 
+    // MARK: - Experiments and personalizations
+
+    /// The experiments and personalizations served to this person, over choose-api.
+    ///
+    /// Pass `names` or `groups`. Leaving out both evaluates, and so EXPOSES, every API-channel
+    /// experience the person is eligible for, and spends every `once` display among them.
+    /// Completes with `[]` on any failure, a malformed call included; it never throws.
+    ///
+    /// - Parameter disableExposure: evaluate without recording an exposure or spending a `once`
+    ///   display, for a read that does not show the result.
+    public func choose(
+        context: FlagContext? = nil,
+        names: [String]? = nil,
+        groups: [String]? = nil,
+        disableExposure: Bool = false,
+        completion: @escaping ([Choice]) -> Void
+    ) {
+        chooser.choose(
+            context: resolvedFlagContext(context), sessionId: identity.sessionId, names: names,
+            groups: groups, disableExposure: disableExposure, completion: completion)
+    }
+
     // MARK: - Flags
 
-    /// The value assigned to this person for `key`, or `defaultValue` if the service did not
-    /// answer.
+    /// The flag's value for this person, or `defaultValue` when nothing was served or the read
+    /// failed. Flags only: an experiment or personalization is read with `choose`.
     ///
-    /// Ask for a KEY, never a mode. Whether the key names an experiment, a personalization or a
-    /// flag is the platform's business: its serving query filters on channel and status and never
-    /// on mode.
+    /// One `/flags/evaluate` call, which records the exposure on the server. While the flag
+    /// stream is connected, an answer younger than 60 s is served from memory; the stream drops a
+    /// changed key at once.
     ///
     /// - Parameter disableExposure: true evaluates without recording an exposure, for a value read
     ///   ahead of rendering it (pre-render, prefetch). Leave it false where the value is shown:
@@ -520,12 +565,9 @@ public final class IntemptInstance {
         }
     }
 
-    /// `variation` plus why (INT-7454, round-2 CONTRACT S3).
-    ///
-    /// `.error` carries the failure in `error`, and the value is `defaultValue`. `.off` means the
-    /// service answered and served nothing for this key. A served value reads `.unanswered` today:
-    /// the serving response sends no reason (a held-back person's experience is absent rather than
-    /// present with a cause), and this method does not guess one.
+    /// `variation` plus why: the server's reason and the served variation, or `.error` with an
+    /// `errorCode` (and an `error` when the request failed). A value whose type does not match
+    /// `defaultValue` comes back as the default with `.typeMismatch`; a `.null` default accepts any.
     public func variationDetail(
         key: String,
         context: FlagContext? = nil,
@@ -533,16 +575,9 @@ public final class IntemptInstance {
         disableExposure: Bool = false,
         completion: @escaping (FlagDetail) -> Void
     ) {
-        let resolved = resolvedFlagContext(context)
         flags.detail(
-            key: key, context: resolved, sessionId: identity.sessionId, exposure: !disableExposure
-        ) { evaluation in
-            completion(
-                FlagDetail(
-                    value: evaluation.value ?? defaultValue,
-                    reason: evaluation.reason,
-                    error: evaluation.error))
-        }
+            key: key, context: resolvedFlagContext(context), sessionId: identity.sessionId,
+            defaultValue: defaultValue, disableExposure: disableExposure, completion: completion)
     }
 
     /// Called for every failed flag request: `variation`, the typed variations, `variationDetail`
@@ -558,27 +593,28 @@ public final class IntemptInstance {
     /// supply one, because it is the value that survives sign-in. Merged, not defaulted: a caller
     /// passing only a userId must still send the stored profileId (INT-7453). Empty counts as
     /// missing because `Flags` omits an empty profileId from the wire anyway. No userId is
-    /// added: see `FlagsTests.testTheDefaultContextDerivesOnProfileIdNotUserId`.
+    /// added: see `FlagEvaluateTests.testTheDefaultContextDerivesOnProfileIdNotUserId`.
     private func resolvedFlagContext(_ context: FlagContext?) -> FlagContext {
         let supplied = context?.profileId.flatMap { $0.isEmpty ? nil : $0 }
         return FlagContext(userId: context?.userId, profileId: supplied ?? identity.profileId)
     }
 
-    /// Every key assigned to this person, in one call, without recording an exposure (INT-7456).
+    /// Every flag served to this person, in one `/flags/all` call that records nothing.
     ///
-    /// Evaluation is separated from exposure: this asks the service not to record a display, so
-    /// an experience the app never renders is not counted and a `ONCE` display is not spent. Read
-    /// a value you render with `variation(key:)`, which records it. See the note on `Flags.all`
-    /// for a service that predates the field.
+    /// The first read of each served key from the returned `FlagValues` records its exposure, once
+    /// per map, so a screen that prefetches twelve flags and shows one counts one. `keys` and
+    /// `count` expose nothing; `dictionary` exposes every served key.
     public func allFlags(
         context: FlagContext? = nil,
-        completion: @escaping ([String: JSONValue]) -> Void
+        completion: @escaping (FlagValues) -> Void
     ) {
         flags.all(
-            context: resolvedFlagContext(context),
-            sessionId: identity.sessionId,
+            context: resolvedFlagContext(context), sessionId: identity.sessionId,
             completion: completion)
     }
+
+    // The typed calls are `variation` with a typed default: a served value of another type comes
+    // back as the default (TYPE_MISMATCH in the detail) and is never coerced.
 
     public func boolVariation(
         key: String,
@@ -590,9 +626,6 @@ public final class IntemptInstance {
         variation(
             key: key, context: context, defaultValue: .bool(defaultValue), disableExposure: disableExposure
         ) { value in
-            // A served value of the wrong type is a misconfiguration, not something to coerce:
-            // the string "false" is truthy in most languages, and a silent coercion is
-            // indistinguishable from a correct answer.
             if case .bool(let b) = value { completion(b) } else { completion(defaultValue) }
         }
     }
@@ -625,18 +658,17 @@ public final class IntemptInstance {
         }
     }
 
+    /// Any JSON value, arrays and scalars included (F30 #4). A `.null` default accepts any value.
     public func jsonVariation(
         key: String,
         context: FlagContext? = nil,
-        defaultValue: [String: JSONValue],
+        defaultValue: JSONValue,
         disableExposure: Bool = false,
-        completion: @escaping ([String: JSONValue]) -> Void
+        completion: @escaping (JSONValue) -> Void
     ) {
         variation(
-            key: key, context: context, defaultValue: .object(defaultValue), disableExposure: disableExposure
-        ) { value in
-            if case .object(let o) = value { completion(o) } else { completion(defaultValue) }
-        }
+            key: key, context: context, defaultValue: defaultValue, disableExposure: disableExposure,
+            completion: completion)
     }
 
     /// Calls back immediately.

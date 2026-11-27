@@ -20,6 +20,8 @@
 //    - Completion-handler based, matching upstream: bridging to async/await
 //      would lose the serial-queue mutual exclusion that keeps concurrent
 //      flushes from interleaving.
+//    - A per-request timeout for render-path reads, and the `/flags/stream`
+//      server-sent-events connection (`openStream`).
 //
 import Foundation
 
@@ -50,6 +52,10 @@ protocol URLSessionProtocol: AnyObject {
         _ request: URLRequest,
         completion: @escaping (Data?, URLResponse?, Error?) -> Void
     )
+
+    /// A long-lived GET whose body arrives as server-sent events. Part of the session contract so
+    /// a test double never lets a test open a real connection.
+    func openStream(_ request: URLRequest, handlers: StreamHandlers) -> StreamHandle
 }
 
 extension URLSession: URLSessionProtocol {
@@ -58,6 +64,12 @@ extension URLSession: URLSessionProtocol {
         completion: @escaping (Data?, URLResponse?, Error?) -> Void
     ) {
         dataTask(with: request, completionHandler: completion).resume()
+    }
+
+    /// Runs on a session of its own: a delegate is what delivers the body in chunks, and a
+    /// session's delegate is fixed at creation, so `self` (usually `.shared`) cannot carry it.
+    func openStream(_ request: URLRequest, handlers: StreamHandlers) -> StreamHandle {
+        SSEConnection.open(request, handlers: handlers)
     }
 }
 
@@ -73,10 +85,13 @@ final class Network {
 
     /// Builds the request the wire contract expects. Exposed so tests can
     /// assert URL, headers and body without performing IO.
+    /// - Parameter timeout: seconds; nil keeps URLSession's default. Flag and choose reads pass
+    ///   2 s (S11, D19): they block a render, and a late answer is worth less than the default.
     func makeRequest(
         endpoint: Endpoint,
         credentials: IntemptCredentials,
-        body: [String: Any]
+        body: [String: Any],
+        timeout: TimeInterval? = nil
     ) throws -> URLRequest {
         guard let url = endpoint.url(host: host) else {
             throw IntemptError.missingConfiguration(field: "endpoint URL")
@@ -91,10 +106,35 @@ final class Network {
         request.setValue(credentials.basicAuthHeader, forHTTPHeaderField: "Authorization")
         request.setValue("intempt-swift/\(Intempt.sdkVersion)", forHTTPHeaderField: "User-Agent")
         request.httpBody = data
+        if let timeout { request.timeoutInterval = timeout }
         // Content-Length is deliberately NOT set: URLSession owns that header
         // and setting it manually is unsupported.
         return request
     }
+
+    /// `GET` with the same authentication as every other route. `timeoutInterval` is the idle
+    /// limit between chunks: the server sends a heartbeat every 15 s, so 45 s without one is a
+    /// dead connection.
+    func openStream(
+        endpoint: Endpoint,
+        credentials: IntemptCredentials,
+        handlers: StreamHandlers
+    ) -> StreamHandle {
+        guard let url = endpoint.url(host: host) else {
+            handlers.onClose()
+            return StreamHandle {}
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = Network.streamIdleTimeout
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue(credentials.basicAuthHeader, forHTTPHeaderField: "Authorization")
+        request.setValue("intempt-swift/\(Intempt.sdkVersion)", forHTTPHeaderField: "User-Agent")
+        return session.openStream(request, handlers: handlers)
+    }
+
+    static let streamIdleTimeout: TimeInterval = 45
 
     func send(_ request: URLRequest, completion: @escaping (HTTPOutcome) -> Void) {
         session.perform(request) { data, response, error in

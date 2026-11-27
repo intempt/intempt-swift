@@ -96,6 +96,15 @@ final class MockSession: URLSessionProtocol {
     }
 
     /// Releases every held completion.
+    private var _streamRequests: [URLRequest] = []
+    var streamRequests: [URLRequest] { lock.withLock { _streamRequests } }
+
+    /// Records the stream and never opens it: no test reaches a real server through it.
+    func openStream(_ request: URLRequest, handlers: StreamHandlers) -> StreamHandle {
+        lock.withLock { _streamRequests.append(request) }
+        return StreamHandle {}
+    }
+
     func releaseDeferred() {
         let held: [() -> Void] = lock.withLock {
             let p = pending

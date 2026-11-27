@@ -124,8 +124,7 @@ struct ContentView: View {
     private var flagsSection: some View {
         Section("Flags") {
             Button("Read a flag") {
-                // Ask for a KEY. Whether it names an experiment, a personalization or a flag is
-                // the platform's business, and this call does not change when that does.
+                // Flags only: an experiment or personalization is read with `choose(names:)`.
                 //
                 // The default is not optional and it is a real decision: it is what you get when
                 // Intempt cannot be reached. Choose the behaviour you already have.
@@ -148,8 +147,9 @@ struct ContentView: View {
             Button("Read every flag") {
                 intempt?.allFlags { values in
                     DemoLog.append("allFlags → \(values.count) key(s)")
-                    for (key, value) in values {
-                        DemoLog.append("  \(key) = \(value)")
+                    // Reading a key is what records its exposure; logging every key exposes them all.
+                    for key in values.keys.sorted() {
+                        DemoLog.append("  \(key) = \(values[key] ?? .null)")
                     }
                 }
             }
